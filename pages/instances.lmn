@@ -1,0 +1,148 @@
+<root>
+  <column class="page instances-page" bg="#12161c" padding="20" gap="14" grow="1">
+
+    <row class="instances-head" align="center" gap="12">
+      <column gap="2" grow="1">
+        <label class="page-title" font-size="22" text-color="#e8eef6" text="Instances" />
+        <label class="page-sub" font-size="13" text-color="#8a97a8" bind-text="instances_count_label" text="No instances yet" />
+      </column>
+      <button id="inst-create-open" class="btn btn-primary" bg="#2f6df0" hover-bg="#3d79f5" press-bg="#2559c8"
+              radius="6" padding="0 16" height="38px" text-color="#ffffff" text="New instance" />
+    </row>
+
+    <label class="instances-status" font-size="13" text-color="#c9a227" bind-text="instances_status" text="" />
+
+    <!-- Create form. The version field takes a version id directly; picking
+         one on the versions page fills it in through the `versions_chosen`
+         signal. -->
+    <if signal="create_open">
+      <column class="instances-create" bg="#1a2029" radius="8" padding="14" gap="10">
+        <label font-size="15" text-color="#e8eef6" text="New instance" />
+        <row gap="10" align="center">
+          <column gap="4" grow="1">
+            <label font-size="12" text-color="#8a97a8" text="Name" />
+            <input id="inst-new-name" class="field" bg="#12161c" radius="6" padding="0 10" height="34px"
+                   text-color="#e8eef6" caret-color="#e8eef6" placeholder="My world" bind-text="new_name" />
+          </column>
+          <column gap="4" width="180px">
+            <label font-size="12" text-color="#8a97a8" text="Game version" />
+            <input id="inst-new-version" class="field" bg="#12161c" radius="6" padding="0 10" height="34px"
+                   text-color="#e8eef6" caret-color="#e8eef6" placeholder="1.21.4" bind-text="new_version" />
+          </column>
+          <a class="link" href="versions" bg="#232b36" radius="6" padding="0 12" height="34px"
+             text-color="#7fb0ff" text="Browse versions" />
+        </row>
+        <label class="instances-chosen" font-size="12" text-color="#8a97a8"
+               bind-text="versions_chosen_text" text="" />
+        <row gap="8" justify="end">
+          <button id="inst-create-cancel" class="btn" bg="#232b36" hover-bg="#2c3543" press-bg="#1c232c"
+                  radius="6" padding="0 14" height="34px" text-color="#c6d0dc" text="Cancel" />
+          <button id="inst-create-confirm" class="btn btn-primary" bg="#2f6df0" hover-bg="#3d79f5" press-bg="#2559c8"
+                  radius="6" padding="0 14" height="34px" text-color="#ffffff" text="Create" />
+        </row>
+      </column>
+    </if>
+
+    <if signal="instances_empty">
+      <column class="instances-empty" bg="#1a2029" radius="8" padding="24" gap="6" align="center">
+        <label font-size="15" text-color="#c6d0dc" text="No instances yet" />
+        <label font-size="13" text-color="#8a97a8" text="Create one to get started." />
+      </column>
+    </if>
+
+    <scroll class="instances-list" grow="1">
+      <for each="instances" key="id" gap="10">
+        <row class="instance-card" bg="#1a2029" radius="8" padding="12" gap="12" align="center">
+          <column gap="4" grow="1">
+            <label class="instance-name" font-size="15" text-color="#e8eef6" wrap="ellipsis" text="{row.name}" />
+            <row gap="8" align="center">
+              <label class="instance-version" font-size="12" text-color="#8a97a8" text="{row.game_version}" />
+              <label class="loader-badge" bg="#233043" radius="4" padding="2 8" font-size="11"
+                     text-color="#7fb0ff" text="{row.loader}" />
+              <label class="instance-memory" font-size="12" text-color="#8a97a8" text="{row.memory_label}" />
+            </row>
+          </column>
+          <tooltip text="Launching needs process support, which Lumen does not have yet (lumen-fx/lumen#126)">
+            <button id="play|{row.id}" class="btn btn-play" bg="#233043" hover-bg="#2b3b52" press-bg="#1c2736"
+                    radius="6" padding="0 14" height="34px" text-color="#7f8b9a" text="Play" />
+          </tooltip>
+          <button id="open|{row.id}" class="btn" bg="#232b36" hover-bg="#2c3543" press-bg="#1c232c"
+                  radius="6" padding="0 12" height="34px" text-color="#c6d0dc" text="Details" />
+          <button id="ren|{row.id}" class="btn" bg="#232b36" hover-bg="#2c3543" press-bg="#1c232c"
+                  radius="6" padding="0 12" height="34px" text-color="#c6d0dc" text="Rename" />
+          <button id="dup|{row.id}" class="btn" bg="#232b36" hover-bg="#2c3543" press-bg="#1c232c"
+                  radius="6" padding="0 12" height="34px" text-color="#c6d0dc" text="Duplicate" />
+          <button id="del|{row.id}" class="btn btn-danger" bg="#3a2229" hover-bg="#4a2b34" press-bg="#2e1b21"
+                  radius="6" padding="0 12" height="34px" text-color="#e2919e" text="Delete" />
+        </row>
+      </for>
+    </scroll>
+
+    <if signal="detail_open">
+      <column class="instance-detail" bg="#1a2029" radius="8" padding="14" gap="10">
+        <row align="center" gap="10">
+          <column gap="2" grow="1">
+            <label class="detail-title" font-size="16" text-color="#e8eef6" bind-text="detail_name" text="" />
+            <label font-size="12" text-color="#8a97a8" bind-text="detail_summary" text="" />
+          </column>
+          <button id="inst-detail-close" class="btn" bg="#232b36" hover-bg="#2c3543" press-bg="#1c232c"
+                  radius="6" padding="0 12" height="32px" text-color="#c6d0dc" text="Close" />
+        </row>
+
+        <row gap="10" align="start">
+          <column gap="4" width="200px">
+            <label font-size="12" text-color="#8a97a8" text="Java memory (MB)" />
+            <input id="inst-detail-memory" class="field" bg="#12161c" radius="6" padding="0 10" height="34px"
+                   text-color="#e8eef6" caret-color="#e8eef6" placeholder="2048" bind-text="detail_memory" />
+          </column>
+          <column gap="4" grow="1">
+            <label font-size="12" text-color="#8a97a8" text="Notes" />
+            <textarea id="inst-detail-notes" class="field" bg="#12161c" radius="6" padding="8 10" height="90px"
+                      text-color="#e8eef6" caret-color="#e8eef6" wrap="word"
+                      placeholder="Mods, resource packs, anything worth remembering" bind-text="detail_notes" />
+          </column>
+        </row>
+
+        <row gap="16">
+          <label font-size="12" text-color="#8a97a8" bind-text="detail_created_label" text="" />
+          <label font-size="12" text-color="#8a97a8" bind-text="detail_played_label" text="" />
+        </row>
+
+        <row gap="8" justify="end">
+          <button id="inst-detail-save" class="btn btn-primary" bg="#2f6df0" hover-bg="#3d79f5" press-bg="#2559c8"
+                  radius="6" padding="0 14" height="34px" text-color="#ffffff" text="Save changes" />
+        </row>
+      </column>
+    </if>
+
+    <dialog open="rename_open">
+      <column class="instances-dialog" bg="#1a2029" radius="8" padding="16" gap="12" width="360px">
+        <label font-size="15" text-color="#e8eef6" text="Rename instance" />
+        <input id="inst-rename-input" class="field" bg="#12161c" radius="6" padding="0 10" height="34px"
+               text-color="#e8eef6" caret-color="#e8eef6" autofocus="true" bind-text="rename_value" />
+        <row gap="8" justify="end">
+          <button id="inst-rename-cancel" class="btn" bg="#232b36" hover-bg="#2c3543" press-bg="#1c232c"
+                  radius="6" padding="0 14" height="34px" text-color="#c6d0dc" text="Cancel" />
+          <button id="inst-rename-ok" class="btn btn-primary" bg="#2f6df0" hover-bg="#3d79f5" press-bg="#2559c8"
+                  radius="6" padding="0 14" height="34px" text-color="#ffffff" default="true" text="Rename" />
+        </row>
+      </column>
+    </dialog>
+
+    <dialog open="confirm_open">
+      <column class="instances-dialog" bg="#1a2029" radius="8" padding="16" gap="12" width="360px">
+        <label font-size="15" text-color="#e8eef6" text="Delete instance" />
+        <label font-size="13" text-color="#8a97a8" wrap="word" bind-text="confirm_text" text="" />
+        <row gap="8" justify="end">
+          <button id="inst-delete-cancel" class="btn" bg="#232b36" hover-bg="#2c3543" press-bg="#1c232c"
+                  radius="6" padding="0 14" height="34px" text-color="#c6d0dc" text="Cancel" />
+          <button id="inst-delete-ok" class="btn btn-danger" bg="#3a2229" hover-bg="#4a2b34" press-bg="#2e1b21"
+                  radius="6" padding="0 14" height="34px" text-color="#e2919e" default="true" text="Delete" />
+        </row>
+      </column>
+    </dialog>
+
+  </column>
+
+  <script src="pages/instances.cdl" />
+</root>
