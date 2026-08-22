@@ -1,0 +1,5 @@
+[app]
+entry = "main.lmn"
+
+[window]
+title = "App"
