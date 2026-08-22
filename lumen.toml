@@ -18,4 +18,4 @@ status = "string"
 
 [pages]
 enabled = true
-include = ["main.lmn", "pages/settings.lmn", "pages/versions.lmn"]
+include = ["main.lmn", "pages/settings.lmn", "pages/versions.lmn", "pages/instances.lmn"]

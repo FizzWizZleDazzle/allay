@@ -19,6 +19,7 @@ fn on_ready() {
     let theme = signal("theme");
     apply_theme(theme.get());
     versions_init();
+    instances_init();
 }
 
 fn load_settings() {

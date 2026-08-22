@@ -1,4 +1,5 @@
-<root>
+<root class="app">
+  <use template="shell" active="instances">
   <column class="page instances-page" bg="#12161c" padding="20" gap="14" grow="1">
 
     <row class="instances-head" align="center" gap="12">
@@ -143,6 +144,7 @@
     </dialog>
 
   </column>
+  </use>
 
   <script src="pages/instances.cdl" />
 </root>
