@@ -14,9 +14,11 @@ fn on_start() {
     lumen::derive("jvm_memory_label", ["jvm_memory"], "format_memory");
 }
 
+// One on_ready exists across the whole app; every page's setup hangs off it.
 fn on_ready() {
     let theme = signal("theme");
     apply_theme(theme.get());
+    versions_init();
 }
 
 fn load_settings() {

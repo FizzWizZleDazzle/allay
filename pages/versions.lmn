@@ -1,0 +1,64 @@
+<root>
+  <column class="versions" gap="12" padding="16">
+    <row class="versions-head" align="center" gap="12">
+      <label style="headline-md" text="Minecraft versions"/>
+      <spacer/>
+      <label class="versions-status" bind-text="versions_status"/>
+      <button id="versions-refresh" text="Refresh"/>
+    </row>
+
+    <row class="versions-latest" gap="12">
+      <column class="versions-card" gap="4" padding="12" radius="8" grow="1">
+        <label class="versions-card-kind" style="label-md" text="Latest release"/>
+        <label class="versions-card-id" style="title-md" bind-text="versions_latest_release"/>
+        <button id="versions-use-latest-release" text="Use for new instance"/>
+      </column>
+      <column class="versions-card" gap="4" padding="12" radius="8" grow="1">
+        <label class="versions-card-kind" style="label-md" text="Latest snapshot"/>
+        <label class="versions-card-id" style="title-md" bind-text="versions_latest_snapshot"/>
+        <button id="versions-use-latest-snapshot" text="Use for new instance"/>
+      </column>
+    </row>
+
+    <row class="versions-filters" align="center" gap="8">
+      <dropdown id="versions-type" bind-value="versions_filter_type" width="220">
+        <option value="Releases"/>
+        <option value="Snapshots"/>
+        <option value="Old beta and alpha"/>
+        <option value="All versions"/>
+      </dropdown>
+      <input id="versions-search" bind-text="versions_query" placeholder="Search by version id" grow="1"/>
+      <label class="versions-count" bind-text="versions_count"/>
+    </row>
+
+    <if signal="versions_chosen">
+      <row class="versions-chosen" align="center" gap="8" padding="8" radius="6">
+        <label class="versions-chosen-text" bind-text="versions_chosen_text"/>
+        <spacer/>
+        <button id="versions-clear-choice" text="Clear"/>
+      </row>
+    </if>
+
+    <if signal="versions_failed">
+      <column class="versions-failed" gap="8" padding="12" radius="8">
+        <label bind-text="versions_failed_text"/>
+        <row>
+          <button id="versions-retry" text="Try again"/>
+        </row>
+      </column>
+    </if>
+
+    <scroll class="versions-list" grow="1">
+      <for each="versions_view" key="id">
+        <row class="versions-row" align="center" gap="12" padding="6">
+          <label class="versions-row-id" width="240" wrap="ellipsis" text="{row.id}"/>
+          <label class="versions-row-type" width="120" text="{row.type}"/>
+          <label class="versions-row-date" grow="1" text="{row.date}"/>
+          <button id="{row.id}:use" class="versions-row-use" text="Use for new instance"/>
+        </row>
+      </for>
+    </scroll>
+
+    <script src="pages/versions.cdl"/>
+  </column>
+</root>
