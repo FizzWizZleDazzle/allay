@@ -1,0 +1,82 @@
+<root class="app">
+  <use template="shell" active="settings">
+    <column class="page" gap="24">
+
+      <column class="page-header" gap="6">
+        <label class="page-eyebrow" text="Preferences"/>
+        <label class="page-title" text="Settings"/>
+        <label class="page-subtitle" wrap="word"
+               text="Changes are saved as you make them."/>
+      </column>
+
+      <column class="card" gap="0">
+        <row class="card-head" align="center" gap="10">
+          <label class="card-title" grow="1" text="Appearance"/>
+        </row>
+        <tile class="divider" height="1px"/>
+        <column class="card-body" gap="18">
+          <row class="field" gap="20" align="center">
+            <column class="field-text" width="260px" gap="3">
+              <label class="field-label" text="Theme"/>
+              <label class="field-hint" wrap="word" text="The look Allay uses."/>
+            </column>
+            <dropdown id="theme-picker" class="control" width="200px" bind-value="theme">
+              <option value="Dark" label="Dark"/>
+              <option value="Light" label="Light"/>
+            </dropdown>
+          </row>
+        </column>
+      </column>
+
+      <column class="card" gap="0">
+        <row class="card-head" align="center" gap="10">
+          <label class="card-title" grow="1" text="Java"/>
+          <label class="badge badge-quiet" text="Applies to new launches"/>
+        </row>
+        <tile class="divider" height="1px"/>
+        <column class="card-body" gap="18">
+          <row class="field" gap="20" align="center">
+            <column class="field-text" width="260px" gap="3">
+              <label class="field-label" text="Memory"/>
+              <label class="field-hint" wrap="word" text="How much heap the game is allowed."/>
+            </column>
+            <slider id="memory" class="control" grow="1" min="1024" max="16384" step="1024"
+                    value="6144" bind-value="jvm_memory"/>
+            <label class="field-value" width="72px" text-align="end"
+                   bind-text="jvm_memory_label" text="6 GB"/>
+          </row>
+          <row class="field" gap="20" align="center">
+            <column class="field-text" width="260px" gap="3">
+              <label class="field-label" text="Extra arguments"/>
+              <label class="field-hint" wrap="word" text="Passed to the JVM verbatim."/>
+            </column>
+            <input id="jvm-args" class="control" grow="1"
+                   placeholder="-XX:+UseG1GC" bind-text="jvm_args"/>
+          </row>
+        </column>
+      </column>
+
+      <column class="card" gap="0">
+        <row class="card-head" align="center" gap="10">
+          <label class="card-title" grow="1" text="Game files"/>
+        </row>
+        <tile class="divider" height="1px"/>
+        <column class="card-body" gap="18">
+          <row class="field" gap="20" align="center">
+            <column class="field-text" width="260px" gap="3">
+              <label class="field-label" text="Game directory"/>
+              <label class="field-hint" wrap="word" text="Where instances, assets, and libraries live."/>
+            </column>
+            <label id="game-dir" class="path" grow="1" wrap="ellipsis"
+                   bind-text="game_dir"/>
+            <button id="browse-dir" class="btn btn-outline" text="Browse"/>
+          </row>
+        </column>
+      </column>
+
+      <label class="page-footnote" wrap="word"
+             text="Settings are stored in allay.json next to the app."/>
+
+    </column>
+  </use>
+</root>

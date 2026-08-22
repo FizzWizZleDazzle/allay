@@ -1,0 +1,99 @@
+import "lumen.cdl";
+
+// Everything the user can change lives in one signal each, and one derived
+// signal writes them all back to disk whenever any of them moves.
+fn on_start() {
+    load_settings();
+
+    let status = signal("status");
+    status.set("Ready");
+
+    lumen::derive("settings_saved",
+                  ["theme", "jvm_memory", "jvm_args", "game_dir"],
+                  "save_settings");
+    lumen::derive("jvm_memory_label", ["jvm_memory"], "format_memory");
+}
+
+fn on_ready() {
+    let theme = signal("theme");
+    apply_theme(theme.get());
+}
+
+fn load_settings() {
+    let theme = "Dark";
+    let memory = 6144.0;
+    let args = "";
+    let dir = "";
+
+    let raw = lumen::read_file("allay.json");
+    if raw.trim() != "" {
+        let parsed = lumen::parse_json(raw);
+        if is_map(parsed) {
+            let cfg = as_map(parsed);
+            if cfg.contains("theme") {
+                theme = as_str(cfg.get("theme"));
+            }
+            if cfg.contains("jvm_memory") {
+                memory = float(as_str(cfg.get("jvm_memory")));
+            }
+            if cfg.contains("jvm_args") {
+                args = as_str(cfg.get("jvm_args"));
+            }
+            if cfg.contains("game_dir") {
+                dir = as_str(cfg.get("game_dir"));
+            }
+        }
+    }
+
+    signal("theme").set(theme);
+    signal("jvm_memory").set_float(memory);
+    signal("jvm_args").set(args);
+    signal("game_dir").set(dir);
+    apply_theme(theme);
+}
+
+fn save_settings(theme: string, memory: float, args: string, dir: string) -> string {
+    let mb = str((int(memory) / 1024) * 1024);
+    let cfg = {"theme": theme, "jvm_memory": mb, "jvm_args": args, "game_dir": dir};
+    let text = json_stringify(cfg);
+    lumen::write_file("allay.json", text);
+    apply_theme(theme);
+    return text;
+}
+
+fn format_memory(memory: float) -> string {
+    let gb = int(memory) / 1024;
+    return str(gb) + " GB";
+}
+
+fn apply_theme(theme: string) {
+    if theme.lowercase() == "light" {
+        lumen::set_color_scheme("force-light");
+    } else {
+        lumen::set_color_scheme("force-dark");
+    }
+}
+
+fn on_click(id: string) {
+    let status = signal("status");
+    if id == "play" {
+        status.set("Launching is not wired up yet");
+    } else if id == "browse-dir" {
+        lumen::pick_folder("game-dir");
+    } else if id == "new-instance" {
+        status.set("Instance creation is not wired up yet");
+    } else if id == "sign-in" {
+        status.set("Accounts are not wired up yet");
+    }
+}
+
+fn on_folder_picked(tag: string, path: string) {
+    if tag == "game-dir" {
+        if path != "" {
+            signal("game_dir").set(path);
+            signal("status").set("Game directory set");
+        }
+    }
+}
+
+fn main() {}

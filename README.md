@@ -9,7 +9,9 @@ so a pack resolves against the version you play, and mods migrate forward
 when the game updates. Allay changes nothing in the game unless you ask it
 to.
 
-Early in development; it does not launch the game yet.
+Early in development; it does not launch the game yet. What runs today is the
+window itself: a sidebar, a home screen, and a settings screen whose theme,
+Java memory, and game directory are saved to `allay.json` beside the app.
 
 ## Run from source
 
