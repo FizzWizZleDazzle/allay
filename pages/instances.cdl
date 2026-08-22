@@ -1,0 +1,502 @@
+// Instance manager: the list, the create flow, and the per-instance detail
+// panel on the instances page.
+//
+// The instance set is kept as one JSON document. `instances_doc` holds its
+// text, the `allay-instances.json` file holds the same text on disk, and the
+// `instances` array signal holds a decorated copy the <for> in instances.lmn
+// renders. Every mutation walks the same path: parse the document, change it,
+// write it back, refresh the rows.
+//
+// Every handler is bound to one element id through lumen::on, so this file
+// defines no global on_click / on_text_input and no on_ready: the app-wide
+// on_ready calls instances_init() once.
+//
+// Signal reads and writes go through the signal() and signal_array() handles.
+//
+// Every early exit returns a value. A bare `return;` inside an `if` block does
+// not leave the function under candela 0.0.5; control falls through it.
+//
+// The `import "lumen.cdl"` line lives in pages/versions.cdl. The app's .cdl
+// files compile as one program and the prelude can only be pulled in once.
+
+// A map read out of parse_json is typed `any`, so calling insert straight on
+// one resolves the list overload; passing it through an untyped parameter
+// picks the map one.
+fn map_put(m, k, v) {
+    m.insert(k, v);
+}
+
+// --- Storage -----------------------------------------------------------------
+
+// read_file and write_file resolve a relative path against the process working
+// directory, and no builtin reports a per-user data directory, so the store
+// sits beside wherever the launcher was started. Point it at a per-user
+// application data directory once Lumen exposes one.
+fn instances_store_path() -> string {
+    return "allay-instances.json";
+}
+
+fn instances_empty_doc() -> string {
+    return "{\"version\":1,\"next_seq\":1,\"instances\":[]}";
+}
+
+fn instances_doc_text() -> string {
+    let text = signal("instances_doc").get();
+    if text == "" {
+        return instances_empty_doc();
+    }
+    return text;
+}
+
+fn instances_read_doc() {
+    let text = instances_doc_text();
+    let parsed = lumen::parse_json(text);
+    if is_null(parsed) {
+        let fresh = instances_empty_doc();
+        let seeded = lumen::parse_json(fresh);
+        return as_map(seeded);
+    }
+    return as_map(parsed);
+}
+
+fn instances_of(d) {
+    let raw = d.get("instances");
+    if is_null(raw) {
+        return [];
+    }
+    return as_list(raw);
+}
+
+fn instances_persist(d) -> bool {
+    let text = json_stringify(d);
+    signal("instances_doc").set(text);
+    let path = instances_store_path();
+    let ok = lumen::write_file(path, text);
+    if !ok {
+        signal("instances_status").set("Could not write " + path);
+    }
+    return ok;
+}
+
+// --- Row rendering -----------------------------------------------------------
+
+fn instances_decorate(m) -> bool {
+    let mb = as_int(m.get("memory_mb"));
+    let label = "memory unset";
+    if mb > 0 {
+        label = str(mb) + " MB";
+    }
+    map_put(m, "memory_label", label);
+    let loader = as_str(m.get("loader"));
+    if loader == "" {
+        map_put(m, "loader", "vanilla");
+    }
+    return true;
+}
+
+fn instances_refresh(d) -> bool {
+    let list = instances_of(d);
+    let text = json_stringify(list);
+    let copy = lumen::parse_json(text);
+    let rows = as_list(copy);
+    let i = 0;
+    while i < rows.len() {
+        let m = as_map(rows[i]);
+        instances_decorate(m);
+        i = i + 1;
+    }
+    signal_array("instances").set(rows);
+    instances_bind_rows(rows);
+
+    let n = rows.len();
+    if n == 0 {
+        signal("instances_empty").set("1");
+        signal("instances_count_label").set("No instances yet");
+    } else {
+        signal("instances_empty").set("");
+        if n == 1 {
+            signal("instances_count_label").set("1 instance");
+        } else {
+            signal("instances_count_label").set(str(n) + " instances");
+        }
+    }
+    return true;
+}
+
+// A row's buttons carry the ids "play|<id>", "open|<id>" and so on. Routing is
+// keyed by id string, so a row spawned later only needs its ids registered
+// once, here, after the array signal is written.
+fn instances_bind_rows(rows) -> bool {
+    let i = 0;
+    while i < rows.len() {
+        let m = as_map(rows[i]);
+        let id = as_str(m.get("id"));
+        lumen::on("click", "play|" + id, "instances_play_clicked");
+        lumen::on("click", "open|" + id, "instances_open_clicked");
+        lumen::on("click", "ren|" + id, "instances_rename_clicked");
+        lumen::on("click", "dup|" + id, "instances_duplicate_clicked");
+        lumen::on("click", "del|" + id, "instances_delete_clicked");
+        i = i + 1;
+    }
+    return true;
+}
+
+// --- Lookup helpers ----------------------------------------------------------
+
+fn instances_row_id(id: string) -> string {
+    let cut = id.find("|");
+    if cut < 0 {
+        return "";
+    }
+    return id[cut + 1..id.len()];
+}
+
+fn instances_index_of(list, id: string) -> int {
+    let i = 0;
+    while i < list.len() {
+        let m = as_map(list[i]);
+        if as_str(m.get("id")) == id {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn instances_name_of(list, id: string) -> string {
+    let at = instances_index_of(list, id);
+    if at < 0 {
+        return "";
+    }
+    let m = as_map(list[at]);
+    return as_str(m.get("name"));
+}
+
+// --- Create ------------------------------------------------------------------
+
+fn instances_record_text(id: string, name: string, version: string) -> string {
+    let clean = name.replace("\"", "'");
+    return "{\"id\":\"" + id + "\",\"name\":\"" + clean + "\",\"game_version\":\"" + version
+        + "\",\"loader\":\"vanilla\",\"memory_mb\":2048,\"notes\":\"\",\"created\":\"\",\"last_played\":\"\"}";
+}
+
+// The versions page writes its pick to `versions_chosen`, so opening the form
+// after browsing arrives with the version already filled in.
+fn instances_create_open(id: string) -> bool {
+    let chosen = signal("versions_chosen").get();
+    if chosen != "" {
+        signal("new_version").set(chosen);
+    }
+    signal("create_open").set("1");
+    signal("instances_status").set("");
+    return true;
+}
+
+fn instances_create_cancel(id: string) -> bool {
+    signal("create_open").set("");
+    signal("new_name").set("");
+    return true;
+}
+
+fn instances_create_confirm(id: string) -> bool {
+    let name = signal("new_name").get();
+    let wanted = name.trim();
+    if wanted == "" {
+        signal("instances_status").set("Give the instance a name.");
+        return false;
+    }
+    let raw_version = signal("new_version").get();
+    let version = raw_version.trim();
+    if version == "" {
+        signal("instances_status").set("Pick a game version, or type one in.");
+        return false;
+    }
+
+    let d = instances_read_doc();
+    let seq = as_int(d.get("next_seq"));
+    let new_id = "inst-" + str(seq);
+    map_put(d, "next_seq", seq + 1);
+
+    let text = instances_record_text(new_id, wanted, version);
+    let parsed = lumen::parse_json(text);
+    let record = as_map(parsed);
+    let list = instances_of(d);
+    list.push(record);
+
+    instances_persist(d);
+    instances_refresh(d);
+    signal("create_open").set("");
+    signal("new_name").set("");
+    signal("instances_status").set("Created " + wanted + ".");
+    instances_show_detail(new_id);
+    return true;
+}
+
+// --- Play --------------------------------------------------------------------
+
+// Launching the game means starting a process, which Lumen cannot do
+// (lumen-fx/lumen#126). The button says so rather than pretending.
+fn instances_play_clicked(id: string) -> bool {
+    let iid = instances_row_id(id);
+    let d = instances_read_doc();
+    let list = instances_of(d);
+    let name = instances_name_of(list, iid);
+    let why = "Cannot launch " + name + " yet: Lumen has no process support (lumen-fx/lumen#126).";
+    signal("instances_status").set(why);
+    return true;
+}
+
+// --- Detail panel ------------------------------------------------------------
+
+fn instances_show_detail(iid: string) -> bool {
+    let d = instances_read_doc();
+    let list = instances_of(d);
+    let at = instances_index_of(list, iid);
+    if at < 0 {
+        return false;
+    }
+    let m = as_map(list[at]);
+    signal("detail_id").set(iid);
+    signal("detail_name").set(as_str(m.get("name")));
+    let version = as_str(m.get("game_version"));
+    let loader = as_str(m.get("loader"));
+    signal("detail_summary").set(version + " - " + loader);
+    let mb = as_int(m.get("memory_mb"));
+    signal("detail_memory").set(str(mb));
+    signal("detail_notes").set(as_str(m.get("notes")));
+
+    // No builtin reports the time, so both stamps stay empty for now.
+    let created = as_str(m.get("created"));
+    if created == "" {
+        signal("detail_created_label").set("Created: not recorded");
+    } else {
+        signal("detail_created_label").set("Created: " + created);
+    }
+    let played = as_str(m.get("last_played"));
+    if played == "" {
+        signal("detail_played_label").set("Last played: never");
+    } else {
+        signal("detail_played_label").set("Last played: " + played);
+    }
+    signal("detail_open").set("1");
+    return true;
+}
+
+fn instances_open_clicked(id: string) -> bool {
+    let iid = instances_row_id(id);
+    return instances_show_detail(iid);
+}
+
+fn instances_detail_close(id: string) -> bool {
+    signal("detail_open").set("");
+    signal("detail_id").set("");
+    return true;
+}
+
+fn instances_detail_save(id: string) -> bool {
+    let iid = signal("detail_id").get();
+    if iid == "" {
+        return false;
+    }
+    // int() only runs once is_int() has said the text is a number.
+    let memory_text = signal("detail_memory").get();
+    let trimmed = memory_text.trim();
+    let numeric = trimmed.is_int();
+    if !numeric {
+        signal("instances_status").set("Memory must be a whole number of megabytes.");
+        return false;
+    }
+    let mb = int(trimmed);
+    let too_small = mb < 256;
+    if too_small {
+        signal("instances_status").set("Give the instance at least 256 MB.");
+        return false;
+    }
+    let notes = signal("detail_notes").get();
+
+    let d = instances_read_doc();
+    let list = instances_of(d);
+    let at = instances_index_of(list, iid);
+    if at < 0 {
+        return false;
+    }
+    let m = as_map(list[at]);
+    map_put(m, "memory_mb", mb);
+    map_put(m, "notes", notes);
+
+    instances_persist(d);
+    instances_refresh(d);
+    let name = as_str(m.get("name"));
+    signal("instances_status").set("Saved " + name + ".");
+    instances_show_detail(iid);
+    return true;
+}
+
+// --- Rename ------------------------------------------------------------------
+
+fn instances_rename_clicked(id: string) -> bool {
+    let iid = instances_row_id(id);
+    let d = instances_read_doc();
+    let list = instances_of(d);
+    let name = instances_name_of(list, iid);
+    if name == "" {
+        return false;
+    }
+    signal("rename_id").set(iid);
+    signal("rename_value").set(name);
+    signal("rename_open").set("1");
+    return true;
+}
+
+fn instances_rename_cancel(id: string) -> bool {
+    signal("rename_open").set("");
+    signal("rename_id").set("");
+    return true;
+}
+
+fn instances_rename_ok(id: string) -> bool {
+    let iid = signal("rename_id").get();
+    if iid == "" {
+        return false;
+    }
+    let raw = signal("rename_value").get();
+    let name = raw.trim();
+    if name == "" {
+        signal("instances_status").set("An instance needs a name.");
+        return false;
+    }
+    let open_id = signal("detail_id").get();
+
+    let d = instances_read_doc();
+    let list = instances_of(d);
+    let at = instances_index_of(list, iid);
+    if at < 0 {
+        return false;
+    }
+    let m = as_map(list[at]);
+    map_put(m, "name", name);
+
+    instances_persist(d);
+    instances_refresh(d);
+    signal("rename_open").set("");
+    signal("rename_id").set("");
+    signal("instances_status").set("Renamed to " + name + ".");
+    if open_id == iid {
+        instances_show_detail(iid);
+    }
+    return true;
+}
+
+// --- Duplicate ---------------------------------------------------------------
+
+fn instances_duplicate_clicked(id: string) -> bool {
+    let iid = instances_row_id(id);
+    let d = instances_read_doc();
+    let list = instances_of(d);
+    let at = instances_index_of(list, iid);
+    if at < 0 {
+        return false;
+    }
+    let source = as_map(list[at]);
+    let text = json_stringify(source);
+    let parsed = lumen::parse_json(text);
+    let copy = as_map(parsed);
+
+    let seq = as_int(d.get("next_seq"));
+    let new_id = "inst-" + str(seq);
+    map_put(d, "next_seq", seq + 1);
+    map_put(copy, "id", new_id);
+    let name = as_str(source.get("name"));
+    map_put(copy, "name", name + " copy");
+    map_put(copy, "last_played", "");
+    list.push(copy);
+
+    instances_persist(d);
+    instances_refresh(d);
+    signal("instances_status").set("Duplicated " + name + ".");
+    return true;
+}
+
+// --- Delete ------------------------------------------------------------------
+
+fn instances_delete_clicked(id: string) -> bool {
+    let iid = instances_row_id(id);
+    let d = instances_read_doc();
+    let list = instances_of(d);
+    let name = instances_name_of(list, iid);
+    if name == "" {
+        return false;
+    }
+    signal("confirm_id").set(iid);
+    signal("confirm_text").set("Delete " + name + "? This removes it from the launcher.");
+    signal("confirm_open").set("1");
+    return true;
+}
+
+fn instances_delete_cancel(id: string) -> bool {
+    signal("confirm_open").set("");
+    signal("confirm_id").set("");
+    return true;
+}
+
+fn instances_delete_ok(id: string) -> bool {
+    let iid = signal("confirm_id").get();
+    if iid == "" {
+        return false;
+    }
+    let open_id = signal("detail_id").get();
+
+    let d = instances_read_doc();
+    let list = instances_of(d);
+    let at = instances_index_of(list, iid);
+    if at < 0 {
+        return false;
+    }
+    let m = as_map(list[at]);
+    let name = as_str(m.get("name"));
+    list.remove(at);
+
+    instances_persist(d);
+    instances_refresh(d);
+    signal("confirm_open").set("");
+    signal("confirm_id").set("");
+    signal("instances_status").set("Deleted " + name + ".");
+    if open_id == iid {
+        signal("detail_open").set("");
+        signal("detail_id").set("");
+    }
+    return true;
+}
+
+// --- Start up ----------------------------------------------------------------
+
+// Seam for the app shell: whichever page owns on_ready calls this once.
+fn instances_init() -> bool {
+    lumen::on("click", "inst-create-open", "instances_create_open");
+    lumen::on("click", "inst-create-cancel", "instances_create_cancel");
+    lumen::on("click", "inst-create-confirm", "instances_create_confirm");
+    lumen::on("click", "inst-detail-close", "instances_detail_close");
+    lumen::on("click", "inst-detail-save", "instances_detail_save");
+    lumen::on("click", "inst-rename-cancel", "instances_rename_cancel");
+    lumen::on("click", "inst-rename-ok", "instances_rename_ok");
+    lumen::on("click", "inst-delete-cancel", "instances_delete_cancel");
+    lumen::on("click", "inst-delete-ok", "instances_delete_ok");
+
+    signal("instances_status").set("");
+    signal("create_open").set("");
+    signal("detail_open").set("");
+    signal("detail_id").set("");
+    signal("rename_open").set("");
+    signal("rename_id").set("");
+    signal("confirm_open").set("");
+    signal("confirm_id").set("");
+    signal("new_name").set("");
+
+    let path = instances_store_path();
+    let stored = lumen::read_file(path);
+    signal("instances_doc").set(stored);
+
+    let d = instances_read_doc();
+    instances_refresh(d);
+    return true;
+}
