@@ -1,5 +1,6 @@
-<root>
-  <column class="versions" gap="12" padding="16">
+<root class="app">
+  <use template="shell" active="versions">
+  <column class="versions page" gap="12" padding="16">
     <row class="versions-head" align="center" gap="12">
       <label style="headline-md" text="Minecraft versions"/>
       <spacer/>
@@ -61,4 +62,5 @@
 
     <script src="pages/versions.cdl"/>
   </column>
+  </use>
 </root>
