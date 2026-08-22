@@ -1,0 +1,67 @@
+<root>
+  <template name="shell" active="home">
+    <column class="shell shell-{active}" width="100%" height="100%">
+      <row class="shell-body" width="100%" grow="1">
+
+        <column class="sidebar" width="236px" height="100%">
+          <row class="brand" align="center" gap="12">
+            <tile class="brand-mark" width="30px" height="30px"/>
+            <column gap="1">
+              <label class="brand-name" text="Allay"/>
+              <label class="brand-tag" text="Minecraft launcher"/>
+            </column>
+          </row>
+
+          <column class="nav" gap="2">
+            <label class="nav-section" text="Library"/>
+            <a id="nav-home" class="nav-item" href="/">
+              <tile class="nav-rail" width="3px"/>
+              <label class="nav-label" text="Home"/>
+            </a>
+            <a id="nav-instances" class="nav-item" href="/instances">
+              <tile class="nav-rail" width="3px"/>
+              <label class="nav-label" text="Instances"/>
+            </a>
+
+            <label class="nav-section" text="Setup"/>
+            <a id="nav-versions" class="nav-item" href="/versions">
+              <tile class="nav-rail" width="3px"/>
+              <label class="nav-label" text="Versions"/>
+            </a>
+            <a id="nav-settings" class="nav-item" href="/settings">
+              <tile class="nav-rail" width="3px"/>
+              <label class="nav-label" text="Settings"/>
+            </a>
+          </column>
+
+          <spacer/>
+
+          <column class="account" gap="10">
+            <row align="center" gap="10">
+              <tile class="avatar" width="32px" height="32px"/>
+              <column gap="1" grow="1">
+                <label class="account-name" text="Not signed in"/>
+                <label class="account-meta" text="Offline mode"/>
+              </column>
+            </row>
+            <button id="sign-in" class="btn btn-quiet btn-block" text="Sign in"/>
+          </column>
+        </column>
+
+        <column class="content" grow="1" height="100%">
+          <scroll class="content-scroll" grow="1" width="100%">
+            <slot/>
+          </scroll>
+        </column>
+
+      </row>
+
+      <row class="statusbar" width="100%" align="center" gap="10">
+        <tile class="status-dot" width="7px" height="7px"/>
+        <label class="status-text" bind-text="status" text="Ready"/>
+        <spacer/>
+        <label class="status-meta" text="allay 0.1.0-dev"/>
+      </row>
+    </column>
+  </template>
+</root>
