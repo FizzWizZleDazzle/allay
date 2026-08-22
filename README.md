@@ -18,3 +18,14 @@ Install the Lumen toolchain from [lumenfx.dev](https://lumenfx.dev), then:
 ```sh
 lumenc run .
 ```
+
+## Versions
+
+The versions page browses every Minecraft version Mojang publishes. It shows
+the latest release and the latest snapshot at the top, then the full list with
+a type filter and a search box. Picking a version records it for the next
+instance you create.
+
+The manifest is cached beside the app in `version-manifest.cache`, so the list
+is on screen before the network answers. With no connection the page shows the
+cached list and when it was fetched; with no cache either, it offers a retry.
