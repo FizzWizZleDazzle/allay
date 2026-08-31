@@ -1,0 +1,70 @@
+<root class="app">
+  <use template="shell" active="accounts">
+    <column class="page" gap="24">
+
+      <column class="page-header" gap="6">
+        <label class="page-title" text="Accounts"/>
+        <label class="page-subtitle" wrap="word"
+               text="Sign in with the Microsoft account that owns Minecraft: Java Edition."/>
+      </column>
+
+      <column class="card" gap="0">
+        <row class="card-head" align="center" gap="10">
+          <label class="card-title" grow="1" text="Add an account"/>
+          <button id="account-signin" class="btn btn-primary" text="Sign in with Microsoft"/>
+        </row>
+
+        <if signal="account_flow">
+          <column class="account-flow" gap="12">
+            <tile class="divider" height="1px"/>
+            <column class="card-body" gap="12">
+              <label class="account-status" wrap="word" bind-text="account_status"/>
+
+              <if signal="account_code">
+                <column gap="10">
+                  <label class="field-hint" text="Enter this code after opening the page:"/>
+                  <label class="account-code" bind-text="account_code"/>
+                  <label class="account-url" wrap="word" bind-text="account_url"/>
+                  <row gap="10">
+                    <button id="account-open-browser" class="btn btn-outline" text="Open in browser"/>
+                    <button id="account-copy-code" class="btn btn-quiet" text="Copy code"/>
+                    <spacer/>
+                    <button id="account-cancel" class="btn btn-quiet" text="Cancel"/>
+                  </row>
+                </column>
+              </if>
+            </column>
+          </column>
+        </if>
+      </column>
+
+      <if signal="accounts_empty">
+        <column class="card empty" gap="8" align="center" justify="center">
+          <label class="empty-title" text="No accounts yet"/>
+          <label class="empty-body" wrap="word" text-align="center"
+                 text="Without an account Allay launches in offline mode, which works in singleplayer and on servers that do not check."/>
+        </column>
+      </if>
+
+      <column class="accounts-list" gap="10">
+        <for each="accounts" key="id">
+          <row class="account-card" align="center" gap="12">
+            <column grow="1" gap="2">
+              <label class="account-card-name" text="{row.name}"/>
+              <label class="account-card-meta" text="{row.kind_label}"/>
+            </column>
+            <label class="badge" text="{row.state}"/>
+            <button id="use-account|{row.id}" class="btn" text="Use"/>
+            <button id="drop-account|{row.id}" class="btn btn-danger" text="Remove"/>
+          </row>
+        </for>
+      </column>
+
+      <label class="page-footnote" wrap="word"
+             text="Allay signs in with the device-code flow published for Minecraft for Nintendo Switch, because Mojang no longer registers new launcher applications. Your password is never entered into Allay; Microsoft hands back a token after you approve the code in a browser. Tokens are stored unencrypted in Allay's data directory."/>
+
+    </column>
+  </use>
+
+  <script src="pages/accounts.cdl"/>
+</root>

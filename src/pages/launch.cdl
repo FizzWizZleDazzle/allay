@@ -10,13 +10,42 @@ import "lumen.cdl";
 // --gameDir rather than being the directory the game runs in. The game's own
 // log file still lands beside the launcher.
 
+// The player the game is launched as. With an account signed in these read
+// its profile; with none they fall back to offline play, which the game
+// accepts in singleplayer and on servers that do not check.
 fn launch_player() -> string {
+    let a = as_map(accounts_active());
+    if a.contains("name") {
+        return as_str(a.get("name"));
+    }
     return "Player";
 }
 
-// Offline play needs a UUID and a token, and the game does not check either.
 fn launch_uuid() -> string {
+    let a = as_map(accounts_active());
+    if a.contains("uuid") {
+        return as_str(a.get("uuid"));
+    }
     return "0f4c1f2e-9a3b-4c5d-8e6f-7a8b9c0d1e2f";
+}
+
+fn launch_token() -> string {
+    let a = as_map(accounts_active());
+    if a.contains("access_token") {
+        return as_str(a.get("access_token"));
+    }
+    return "0";
+}
+
+// The game treats "msa" as a signed-in session and "legacy" as offline play.
+fn launch_user_type() -> string {
+    let a = as_map(accounts_active());
+    if a.contains("type") {
+        if as_str(a.get("type")) == "msa" {
+            return "msa";
+        }
+    }
+    return "legacy";
 }
 
 fn launch_init() -> bool {
@@ -84,11 +113,11 @@ fn launch_substitute(value: string, version: string, root, game_dir: string, cla
     out = out.replace("${game_assets}", assets_dir());
     out = out.replace("${assets_index_name}", asset_id);
     out = out.replace("${auth_uuid}", launch_uuid());
-    out = out.replace("${auth_access_token}", "0");
-    out = out.replace("${auth_session}", "0");
+    out = out.replace("${auth_access_token}", launch_token());
+    out = out.replace("${auth_session}", launch_token());
     out = out.replace("${clientid}", "");
     out = out.replace("${auth_xuid}", "");
-    out = out.replace("${user_type}", "legacy");
+    out = out.replace("${user_type}", launch_user_type());
     out = out.replace("${user_properties}", "{}");
     out = out.replace("${version_type}", as_str(root.get("type")));
     out = out.replace("${natives_directory}", install_natives_dir(version));

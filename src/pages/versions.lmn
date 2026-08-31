@@ -61,7 +61,7 @@
       </column>
     </if>
 
-    <scroll class="versions-list" grow="1">
+    <column class="versions-list">
       <for each="versions_view" key="id">
         <row class="versions-row" align="center" gap="12" padding="6">
           <label class="versions-row-id" width="240" wrap="ellipsis" text="{row.id}"/>
@@ -71,7 +71,7 @@
           <button id="{row.id}:use" class="versions-row-use" text="Use for new instance"/>
         </row>
       </for>
-    </scroll>
+    </column>
 
     <script src="pages/versions.cdl"/>
     <script src="pages/install.cdl"/>

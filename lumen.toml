@@ -9,7 +9,7 @@ remember_state = true
 
 [pages]
 enabled = true
-include = ["main.lmn", "pages/settings.lmn", "pages/versions.lmn", "pages/instances.lmn"]
+include = ["main.lmn", "pages/settings.lmn", "pages/versions.lmn", "pages/instances.lmn", "pages/accounts.lmn"]
 
 # Background art and icons. Code lives in src/; everything the app ships as
 # data stays at the root.

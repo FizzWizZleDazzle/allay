@@ -2,9 +2,6 @@ import "lumen.cdl";
 
 // The version browser. Reads the cached manifest first so the list is on
 // screen immediately, then refreshes from Mojang and re-renders.
-//
-// Every early exit here returns a value. A bare `return;` inside an `if` block
-// does not leave the function under candela 0.0.5; control falls through it.
 
 fn versions_cache_path() -> string {
     return manifest_cache_path();
@@ -40,9 +37,6 @@ fn versions_init() -> bool {
     return true;
 }
 
-// The request is spelled as JSON rather than as a candela map literal: once the
-// manifest has been parsed, building a map in script segfaults candela 0.0.5,
-// and a refresh happens after exactly that.
 fn versions_request() -> bool {
     signal("versions_status").set("Checking for updates...");
     let url = versions_manifest_url();
@@ -151,9 +145,8 @@ fn versions_read_list(root) -> bool {
     let rows = [];
     for entry in entries {
         let m = as_map(entry);
-        // A short date column reads better than the full timestamp. The field
-        // goes onto the record the manifest already gave us, because building
-        // a fresh map after a large parse_json segfaults candela 0.0.5.
+        // A short date column reads better than the full timestamp, and the
+        // field goes onto the record the manifest already gave us.
         let stamp = as_str(m.get("releaseTime"));
         let date = stamp[..10];
         m.insert("date", date);
@@ -200,9 +193,8 @@ fn versions_recount(kind: string, query: string, generation: string) -> string {
     return str(shown) + " of " + str(total) + " versions";
 }
 
-// `kind` is the dropdown's selected value, spelled the way it is displayed: a
-// closed dropdown in Lumen 0.0.5 shows the option's value and ignores its
-// label, so the value has to be the readable text.
+// `kind` is the dropdown's selected value, spelled the way it is displayed,
+// so the filter compares against the text the user picked.
 fn versions_matches(m, kind: string, needle: string) -> bool {
     let ty = as_str(m.get("type"));
     let kind_ok = false;

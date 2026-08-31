@@ -76,10 +76,13 @@ fn on_start() {
 
 // One on_ready exists across the whole app; every page's setup hangs off it.
 fn on_ready() {
+    accounts_init();
     versions_init();
     install_init();
     instances_init();
     launch_init();
+    lumen::on("click", "home-play", "home_play_clicked");
+    home_refresh();
 }
 
 // --- Settings ----------------------------------------------------------------
@@ -125,16 +128,92 @@ fn format_memory(memory: float) -> string {
     return str(gb) + " GB";
 }
 
+// --- Home --------------------------------------------------------------------
+
+// The home page is a summary of what is actually on disk. It is rebuilt
+// whenever something it counts changes, rather than being derived, because its
+// inputs are files rather than signals.
+fn home_refresh() -> bool {
+    let d = instances_read_doc();
+    let list = instances_of(d);
+    signal("home_instance_count").set(str(list.len()));
+
+    let versions = files::list(versions_dir());
+    signal("home_version_count").set(str(versions.len()));
+
+    let accounts = accounts_list_of(accounts_read_doc());
+    signal("home_account_count").set(str(accounts.len()));
+
+    return home_pick_last(list);
+}
+
+// candela does not order strings, so the stamp is reduced to the number its
+// digits spell. The format is fixed-width, so the ordering is the same.
+fn stamp_key(stamp: string) -> int {
+    let digits = stamp.replace("-", "").replace(" ", "").replace(":", "");
+    if is_int(digits) == false {
+        return 0;
+    }
+    return int(digits);
+}
+
+// The card shows whichever instance was played most recently, and the first
+// one in the list until any of them has been played.
+fn home_pick_last(list) -> bool {
+    signal("home_has_instance").set("");
+    signal("home_no_instance").set("1");
+    if list.len() == 0 {
+        return true;
+    }
+
+    let best = as_map(list[0]);
+    let best_stamp = "";
+    let best_key = -1;
+    for entry in list {
+        let m = as_map(entry);
+        let stamp = as_str(m.get("last_played"));
+        let key = stamp_key(stamp);
+        if key > best_key {
+            best_key = key;
+            best_stamp = stamp;
+            best = m;
+        }
+    }
+
+    signal("home_last_id").set(as_str(best.get("id")));
+    signal("home_last_name").set(as_str(best.get("name")));
+    signal("home_last_version").set(as_str(best.get("game_version")));
+    signal("home_last_loader").set(as_str(best.get("loader")));
+
+    let mb = as_int(best.get("memory_mb"));
+    let played = "never played";
+    if best_stamp != "" {
+        played = "last played " + best_stamp;
+    }
+    let installed = "not installed";
+    if install_is_installed(as_str(best.get("game_version"))) {
+        installed = "installed";
+    }
+    signal("home_last_meta").set(played + "  -  " + str(mb) + " MB heap  -  " + installed);
+
+    signal("home_has_instance").set("1");
+    signal("home_no_instance").set("");
+    return true;
+}
+
+fn home_play_clicked(id: string) -> bool {
+    let iid = signal("home_last_id").get();
+    if iid == "" {
+        return false;
+    }
+    return instances_play_clicked("play|" + iid);
+}
+
 // --- Shell handlers ----------------------------------------------------------
 
 fn on_click(id: string) {
-    let status = signal("status");
     if id == "browse-dir" {
         lumen::pick_folder("game-dir");
-    } else if id == "new-instance" {
-        lumen::page("/instances");
-    } else if id == "sign-in" {
-        status.set("Accounts are not wired up yet");
     }
 }
 

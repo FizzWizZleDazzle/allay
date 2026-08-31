@@ -15,9 +15,6 @@ import "std/time";
 // on_ready calls instances_init() once.
 //
 // Signal reads and writes go through the signal() and signal_array() handles.
-//
-// Every early exit returns a value. A bare `return;` inside an `if` block does
-// not leave the function under candela 0.0.5; control falls through it.
 
 // A map read out of parse_json is typed `any`, so calling insert straight on
 // one resolves the list overload; passing it through an untyped parameter
@@ -116,6 +113,7 @@ fn instances_refresh(d) -> bool {
             signal("instances_count_label").set(str(n) + " instances");
         }
     }
+    home_refresh();
     return true;
 }
 

@@ -468,6 +468,7 @@ fn install_finish() -> bool {
     signal("install_status").set(version + " is installed");
     signal("status").set(version + " is installed");
     versions_mark_installed();
+    home_refresh();
     return true;
 }
 
