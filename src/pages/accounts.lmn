@@ -23,7 +23,10 @@
               <if signal="account_code">
                 <column gap="10">
                   <label class="field-hint" text="Enter this code after opening the page:"/>
-                  <label class="account-code" bind-text="account_code"/>
+                  <!-- An <input> rather than a <label>: only a text field can
+                       be selected, so this is what makes the code copyable by
+                       hand when the clipboard button is not what you want. -->
+                  <input id="account-code-field" class="account-code" bind-text="account_code"/>
                   <label class="account-url" wrap="word" bind-text="account_url"/>
                   <row gap="10">
                     <button id="account-open-browser" class="btn btn-outline" text="Open in browser"/>

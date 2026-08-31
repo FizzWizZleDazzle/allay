@@ -49,8 +49,6 @@ fn accounts_init() -> bool {
     lumen::on("click", "account-cancel", "accounts_cancel_clicked");
     lumen::on("click", "account-copy-code", "accounts_copy_code");
     lumen::on("click", "account-open-browser", "accounts_open_browser");
-    lumen::on("click", "use-account", "accounts_use_clicked");
-    lumen::on("click", "drop-account", "accounts_drop_clicked");
     lumen::on("timer", "account-poll", "accounts_poll_tick");
 
     lumen::on("http", "msa-devicecode", "accounts_on_devicecode");
@@ -118,6 +116,7 @@ fn accounts_refresh() -> bool {
     }
 
     signal_array("accounts").set(rows);
+    accounts_bind_rows(rows);
     signal("accounts_empty").set("");
     if rows.len() == 0 {
         signal("accounts_empty").set("1");
@@ -125,6 +124,18 @@ fn accounts_refresh() -> bool {
     signal("account_name").set(active_name);
     signal("account_kind").set(active_kind);
     home_refresh();
+    return true;
+}
+
+// A row's buttons carry "use-account|<id>" and "drop-account|<id>". Routing
+// matches an id exactly, or an instance suffix after a colon, so each row's
+// ids are registered here after the array signal is written.
+fn accounts_bind_rows(rows) -> bool {
+    for entry in rows {
+        let id = as_str(as_map(entry).get("id"));
+        lumen::on("click", "use-account|" + id, "accounts_use_clicked");
+        lumen::on("click", "drop-account|" + id, "accounts_drop_clicked");
+    }
     return true;
 }
 
