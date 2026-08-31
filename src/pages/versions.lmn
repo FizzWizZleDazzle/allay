@@ -62,7 +62,7 @@
     </if>
 
     <column class="versions-list">
-      <for each="versions_view" key="id">
+      <for each="versions_view" key="id" virtualized="true" row-height="39">
         <row class="versions-row" align="center" gap="12" padding="6">
           <label class="versions-row-id" width="240" wrap="ellipsis" text="{row.id}"/>
           <label class="versions-row-type" width="120" text="{row.type}"/>
