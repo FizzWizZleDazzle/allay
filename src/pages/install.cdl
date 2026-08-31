@@ -1,0 +1,479 @@
+import "lumen.cdl";
+
+// Installing a version: fetch the metadata that describes it, download every
+// file it names, and unpack the native libraries.
+//
+// Metadata goes through lumen::http, because the script has to read it.
+// Everything else is a binary the script never opens, so it goes through
+// download::to_file, which streams straight to disk and reports under a tag.
+//
+// The work list lives in the `install_queue` array signal as {url, path, kind}
+// records, walked by a cursor. A version indexes a few thousand asset objects,
+// so the list is written once rather than a few thousand times.
+
+fn install_os() -> string {
+    return "linux";
+}
+
+fn install_arch() -> string {
+    return "64";
+}
+
+fn install_objects_base() -> string {
+    return "https://resources.download.minecraft.net/";
+}
+
+// --- Setup -------------------------------------------------------------------
+
+fn install_init() -> bool {
+    signal("install_id").set("");
+    signal("install_phase").set("idle");
+    signal("install_status").set("");
+    signal("install_error").set("");
+    signal("install_total").set_int(0);
+    signal("install_done").set_int(0);
+    signal("install_active").set_int(0);
+    signal("install_cursor").set_int(0);
+    signal("install_natives").set_int(0);
+
+    // Every version row's install button is "<version>:install", so one route
+    // covers the whole list.
+    lumen::on("click", "install", "install_clicked");
+    lumen::on("click", "install-cancel", "install_dismiss");
+    lumen::on("http", "allay-version-json", "install_on_version_json");
+    lumen::on("http", "allay-asset-index", "install_on_asset_index");
+    return true;
+}
+
+// How many transfers run at once. Matches lumen.toml's max_concurrent: the
+// module refuses a call past its own limit, so asking for more would only
+// produce errors.
+fn install_lanes() -> int {
+    return 16;
+}
+
+fn install_running() -> bool {
+    return signal("install_phase").get() == "running";
+}
+
+// --- Is a version already installed? ------------------------------------------
+
+fn install_client_jar(version: string) -> string {
+    return versions_dir() + "/" + version + "/" + version + ".jar";
+}
+
+fn install_version_json(version: string) -> string {
+    return versions_dir() + "/" + version + "/" + version + ".json";
+}
+
+fn install_natives_dir(version: string) -> string {
+    return natives_dir() + "/" + version;
+}
+
+fn install_is_installed(version: string) -> bool {
+    return files::exists(install_client_jar(version));
+}
+
+// --- Starting -----------------------------------------------------------------
+
+fn install_clicked(id: string) -> bool {
+    let cut = id.len() - 8;
+    let version = id[..cut];
+    return install_start(version);
+}
+
+fn install_dismiss(id: string) -> bool {
+    let phase = signal("install_phase").get();
+    if phase == "running" {
+        // Transfers already handed to the module cannot be recalled, so the
+        // panel says so rather than pretending the install stopped.
+        signal("install_status").set("Downloads already started cannot be stopped");
+        return false;
+    }
+    signal("install_phase").set("idle");
+    return true;
+}
+
+fn install_start(version: string) -> bool {
+    if install_running() {
+        signal("install_status").set("Another install is already running");
+        return false;
+    }
+
+    let url = install_lookup_url(version);
+    if url == "" {
+        signal("install_phase").set("error");
+        signal("install_error").set("No metadata URL for " + version);
+        return false;
+    }
+
+    signal("install_id").set(version);
+    signal("install_phase").set("running");
+    signal("install_error").set("");
+    signal("install_status").set("Reading the version metadata...");
+    signal("install_total").set_int(0);
+    signal("install_done").set_int(0);
+    signal("install_active").set_int(0);
+    signal("install_cursor").set_int(0);
+    signal("install_natives").set_int(0);
+    signal_array("install_queue").clear();
+
+    files::mkdir(versions_dir() + "/" + version);
+    files::mkdir(install_natives_dir(version));
+
+    let spec = "{\"url\":\"" + url + "\",\"tag\":\"allay-version-json\",\"timeout_ms\":20000}";
+    let request = lumen::parse_json(spec);
+    lumen::http(request);
+    return true;
+}
+
+// The manifest rows the versions page already parsed carry each version's
+// metadata URL, so nothing is re-fetched to find it.
+fn install_lookup_url(version: string) -> string {
+    let rows = signal_array("versions_all").all();
+    let items = as_list(rows);
+    let found = "";
+    for item in items {
+        let m = as_map(item);
+        if as_str(m.get("id")) == version {
+            found = as_str(m.get("url"));
+        }
+    }
+    return found;
+}
+
+// --- Metadata -----------------------------------------------------------------
+
+fn install_on_version_json(tag: string, response: any) -> bool {
+    let r = as_map(response);
+    if as_bool(r.get("ok")) == false {
+        return install_fail("The version metadata could not be fetched");
+    }
+
+    let version = signal("install_id").get();
+    let body = as_str(r.get("body"));
+    files::write(install_version_json(version), body);
+
+    let parsed = lumen::parse_json(body);
+    if is_map(parsed) == false {
+        return install_fail("The version metadata could not be read");
+    }
+    let root = as_map(parsed);
+
+    // The asset index is metadata too: the script reads it to learn the
+    // objects, so it comes back through http rather than as a file.
+    if root.contains("assetIndex") == false {
+        return install_build_queue("");
+    }
+    let index = as_map(root.get("assetIndex"));
+    let url = as_str(index.get("url"));
+    signal("install_asset_id").set(as_str(index.get("id")));
+    signal("install_status").set("Reading the asset index...");
+    let spec = "{\"url\":\"" + url + "\",\"tag\":\"allay-asset-index\",\"timeout_ms\":20000}";
+    let request = lumen::parse_json(spec);
+    lumen::http(request);
+    return true;
+}
+
+fn install_on_asset_index(tag: string, response: any) -> bool {
+    let r = as_map(response);
+    if as_bool(r.get("ok")) == false {
+        return install_fail("The asset index could not be fetched");
+    }
+    let body = as_str(r.get("body"));
+    let asset_id = signal("install_asset_id").get();
+    files::write(assets_dir() + "/indexes/" + asset_id + ".json", body);
+    return install_build_queue(body);
+}
+
+// --- The work list ------------------------------------------------------------
+
+fn install_queue_add(rows, url: string, path: string, kind: string) -> bool {
+    if url == "" {
+        return false;
+    }
+    if files::exists(path) {
+        return false;
+    }
+    let row = {"url": url, "path": path, "kind": kind};
+    rows.push(row);
+    return true;
+}
+
+fn install_build_queue(index_body: string) -> bool {
+    let version = signal("install_id").get();
+    let raw = files::read(install_version_json(version));
+    let parsed = lumen::parse_json(raw);
+    if is_map(parsed) == false {
+        return install_fail("The version metadata could not be read");
+    }
+    let root = as_map(parsed);
+    let rows = [];
+
+    install_add_client(rows, root, version);
+    install_add_libraries(rows, root, version);
+    if index_body != "" {
+        install_add_objects(rows, index_body);
+    }
+
+    signal_array("install_queue").set(rows);
+    let total = rows.len();
+    signal("install_total").set_int(total);
+
+    if total == 0 {
+        return install_finish();
+    }
+    signal("install_status").set("Downloading " + str(total) + " files");
+    return install_pump();
+}
+
+fn install_add_client(rows, root, version: string) -> bool {
+    if root.contains("downloads") == false {
+        return false;
+    }
+    let downloads = as_map(root.get("downloads"));
+    if downloads.contains("client") == false {
+        return false;
+    }
+    let client = as_map(downloads.get("client"));
+    let url = as_str(client.get("url"));
+    return install_queue_add(rows, url, install_client_jar(version), "client");
+}
+
+fn install_add_objects(rows, index_body: string) -> bool {
+    let parsed = lumen::parse_json(index_body);
+    if is_map(parsed) == false {
+        return false;
+    }
+    let root = as_map(parsed);
+    if root.contains("objects") == false {
+        return false;
+    }
+    let objects = as_map(root.get("objects"));
+    let base = install_objects_base();
+    for name in objects.keys() {
+        let entry = as_map(objects.get(name));
+        let hash = as_str(entry.get("hash"));
+        let shard = hash[..2];
+        let url = base + shard + "/" + hash;
+        let path = assets_dir() + "/objects/" + shard + "/" + hash;
+        install_queue_add(rows, url, path, "object");
+    }
+    return true;
+}
+
+// --- Libraries ----------------------------------------------------------------
+
+// A library carries rules saying which systems it belongs to. The default is
+// to skip: a library is downloaded only when a rule allows it, and a later
+// disallow for this system takes it back out again.
+fn install_library_allowed(lib) -> bool {
+    if lib.contains("rules") == false {
+        return true;
+    }
+    let rules = as_list(lib.get("rules"));
+    let allowed = false;
+    for rule in rules {
+        let r = as_map(rule);
+        let action = as_str(r.get("action"));
+        let matches = true;
+        if r.contains("os") {
+            let os = as_map(r.get("os"));
+            if os.contains("name") {
+                matches = as_str(os.get("name")) == install_os();
+            }
+        }
+        if matches {
+            allowed = action == "allow";
+        }
+    }
+    return allowed;
+}
+
+// Older versions name their native jar through a classifier; newer ones ship
+// it as an ordinary library whose name carries ":natives-". Both end up as a
+// jar that has to be unpacked rather than put on the classpath.
+fn install_native_classifier(lib) -> string {
+    if lib.contains("natives") == false {
+        return "";
+    }
+    let natives = as_map(lib.get("natives"));
+    if natives.contains(install_os()) == false {
+        return "";
+    }
+    let key = as_str(natives.get(install_os()));
+    return key.replace("${arch}", install_arch());
+}
+
+fn install_add_libraries(rows, root, version: string) -> bool {
+    if root.contains("libraries") == false {
+        return false;
+    }
+    let libs = as_list(root.get("libraries"));
+    let natives = install_natives_dir(version);
+    for entry in libs {
+        let lib = as_map(entry);
+        if install_library_allowed(lib) == false {
+            continue;
+        }
+        if lib.contains("downloads") == false {
+            continue;
+        }
+        let downloads = as_map(lib.get("downloads"));
+        let name = as_str(lib.get("name"));
+
+        if downloads.contains("artifact") {
+            let artifact = as_map(downloads.get("artifact"));
+            let path = libraries_dir() + "/" + as_str(artifact.get("path"));
+            let url = as_str(artifact.get("url"));
+            let kind = "library";
+            if name.contains(":natives-") {
+                kind = "native";
+            }
+            install_queue_add(rows, url, path, kind);
+        }
+
+        let classifier = install_native_classifier(lib);
+        if classifier != "" {
+            if downloads.contains("classifiers") {
+                let classifiers = as_map(downloads.get("classifiers"));
+                if classifiers.contains(classifier) {
+                    let native = as_map(classifiers.get(classifier));
+                    let path = libraries_dir() + "/" + as_str(native.get("path"));
+                    let url = as_str(native.get("url"));
+                    install_queue_add(rows, url, path, "native");
+                }
+            }
+        }
+    }
+    return true;
+}
+
+// --- Running the queue --------------------------------------------------------
+
+// Keep the lanes full: take rows off the cursor until either the list runs out
+// or every lane is busy. Mojang publishes sha1 for every artifact and
+// download::to_file verifies sha256, so nothing is passed as a checksum and
+// nothing is verified.
+fn install_pump() -> bool {
+    let total = signal("install_total").get_int();
+    let lanes = install_lanes();
+    let cursor = signal("install_cursor").get_int();
+    let active = signal("install_active").get_int();
+
+    while active < lanes {
+        if cursor >= total {
+            break;
+        }
+        let row = as_map(signal_array("install_queue").get(cursor));
+        let url = as_str(row.get("url"));
+        let path = as_str(row.get("path"));
+        let tag = "dl:" + str(cursor);
+        cursor = cursor + 1;
+        let started = download::to_file(url, path, tag, "");
+        if started {
+            active = active + 1;
+        } else {
+            install_count_done();
+        }
+    }
+
+    signal("install_cursor").set_int(cursor);
+    signal("install_active").set_int(active);
+    return true;
+}
+
+fn install_row_index(tag: string) -> int {
+    let cut = tag.find(":");
+    let digits = tag[cut + 1..tag.len()];
+    return int(digits);
+}
+
+fn install_count_done() -> bool {
+    let done = signal("install_done").get_int() + 1;
+    signal("install_done").set_int(done);
+    let total = signal("install_total").get_int();
+    signal("install_status").set(str(done) + " of " + str(total) + " files");
+    let percent = 0;
+    if total > 0 {
+        percent = done * 100 / total;
+    }
+    signal("install_percent").set_int(percent);
+    return true;
+}
+
+fn on_download_done(tag: string, path: string) -> bool {
+    if tag.starts_with("dl:") == false {
+        return false;
+    }
+    let index = install_row_index(tag);
+    let row = as_map(signal_array("install_queue").get(index));
+    if as_str(row.get("kind")) == "native" {
+        let version = signal("install_id").get();
+        let pending = signal("install_natives").get_int() + 1;
+        signal("install_natives").set_int(pending);
+        archive::extract(path, install_natives_dir(version), "nat:" + str(index));
+    }
+
+    let active = signal("install_active").get_int() - 1;
+    signal("install_active").set_int(active);
+    install_count_done();
+    install_pump();
+    return install_maybe_finish();
+}
+
+fn on_download_error(tag: string, message: string) -> bool {
+    if tag.starts_with("dl:") == false {
+        return false;
+    }
+    let active = signal("install_active").get_int() - 1;
+    signal("install_active").set_int(active);
+    signal("install_error").set(message);
+    install_count_done();
+    install_pump();
+    return install_maybe_finish();
+}
+
+fn on_archive_done(tag: string, dest: string, count: int) -> bool {
+    let pending = signal("install_natives").get_int() - 1;
+    signal("install_natives").set_int(pending);
+    return install_maybe_finish();
+}
+
+fn on_archive_error(tag: string, message: string) -> bool {
+    let pending = signal("install_natives").get_int() - 1;
+    signal("install_natives").set_int(pending);
+    signal("install_error").set(message);
+    return install_maybe_finish();
+}
+
+fn install_maybe_finish() -> bool {
+    if install_running() == false {
+        return false;
+    }
+    let done = signal("install_done").get_int();
+    let total = signal("install_total").get_int();
+    if done < total {
+        return false;
+    }
+    if signal("install_natives").get_int() > 0 {
+        return false;
+    }
+    return install_finish();
+}
+
+fn install_finish() -> bool {
+    let version = signal("install_id").get();
+    signal("install_phase").set("done");
+    signal("install_status").set(version + " is installed");
+    signal("status").set(version + " is installed");
+    versions_mark_installed();
+    return true;
+}
+
+fn install_fail(message: string) -> bool {
+    signal("install_phase").set("error");
+    signal("install_error").set(message);
+    signal("install_status").set(message);
+    return false;
+}

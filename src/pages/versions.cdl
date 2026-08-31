@@ -1,4 +1,4 @@
-// The lumen prelude is imported once, by the app shell script.
+import "lumen.cdl";
 
 // The version browser. Reads the cached manifest first so the list is on
 // screen immediately, then refreshes from Mojang and re-renders.
@@ -7,7 +7,7 @@
 // does not leave the function under candela 0.0.5; control falls through it.
 
 fn versions_cache_path() -> string {
-    return "version-manifest.cache";
+    return manifest_cache_path();
 }
 
 fn versions_manifest_url() -> string {
@@ -25,12 +25,12 @@ fn versions_init() -> bool {
     // Every row button is id "<version>:use", so one route covers the list.
     lumen::on("click", "use", "versions_use_clicked");
 
-    lumen::signal_set("versions_filter_type", "Releases");
-    lumen::signal_set("versions_query", "");
-    lumen::signal_set("versions_chosen", "");
-    lumen::signal_set("versions_failed", "");
-    lumen::signal_set("versions_count", "");
-    lumen::signal_set("versions_generation", "0");
+    signal("versions_filter_type").set("Releases");
+    signal("versions_query").set("");
+    signal("versions_chosen").set("");
+    signal("versions_failed").set("");
+    signal("versions_count").set("");
+    signal("versions_generation").set("0");
 
     let deps = ["versions_filter_type", "versions_query", "versions_generation"];
     lumen::derive("versions_count", deps, "versions_recount");
@@ -44,7 +44,7 @@ fn versions_init() -> bool {
 // manifest has been parsed, building a map in script segfaults candela 0.0.5,
 // and a refresh happens after exactly that.
 fn versions_request() -> bool {
-    lumen::signal_set("versions_status", "Checking for updates...");
+    signal("versions_status").set("Checking for updates...");
     let url = versions_manifest_url();
     let spec = "{\"url\":\"" + url + "\",\"tag\":\"allay-version-manifest\",\"timeout_ms\":15000}";
     let request = lumen::parse_json(spec);
@@ -55,19 +55,19 @@ fn versions_request() -> bool {
 // Line 1 of the cache file is the fetch stamp; the rest is the manifest body.
 fn versions_load_cache() -> bool {
     let path = versions_cache_path();
-    let cached = lumen::read_file(path);
+    let cached = files::read(path);
     let cut = -1;
     if cached != "" {
         cut = cached.find("\n");
     }
     if cut < 0 {
-        lumen::signal_set("versions_status", "Loading versions...");
+        signal("versions_status").set("Loading versions...");
     } else {
         let stamp = cached[..cut];
         let body = cached[cut + 1..cached.len()];
-        lumen::signal_set("versions_stamp", stamp);
+        signal("versions_stamp").set(stamp);
         versions_apply(body);
-        lumen::signal_set("versions_status", "Cached, fetched " + stamp);
+        signal("versions_status").set("Cached, fetched " + stamp);
     }
     return true;
 }
@@ -84,11 +84,11 @@ fn versions_on_http(tag: string, response: any) -> bool {
         }
         let cache = stamp + "\n" + body;
         let path = versions_cache_path();
-        lumen::write_file(path, cache);
-        lumen::signal_set("versions_stamp", stamp);
-        lumen::signal_set("versions_failed", "");
+        files::write(path, cache);
+        signal("versions_stamp").set(stamp);
+        signal("versions_failed").set("");
         versions_apply(body);
-        lumen::signal_set("versions_status", "Up to date, fetched " + stamp);
+        signal("versions_status").set("Up to date, fetched " + stamp);
     } else {
         versions_report_offline(r);
     }
@@ -101,14 +101,14 @@ fn versions_report_offline(r) -> bool {
     if status != 0 {
         detail = "HTTP " + str(status);
     }
-    let have = lumen::signal_array_len("versions_all");
+    let have = signal_array("versions_all").len();
     if have > 0 {
-        let stamp = lumen::signal_get("versions_stamp");
-        lumen::signal_set("versions_status", "Offline (" + detail + "), showing cache from " + stamp);
+        let stamp = signal("versions_stamp").get();
+        signal("versions_status").set("Offline (" + detail + "), showing cache from " + stamp);
     } else {
-        lumen::signal_set("versions_status", "No versions loaded");
-        lumen::signal_set("versions_failed", "1");
-        lumen::signal_set("versions_failed_text", "Could not reach Mojang (" + detail + ") and no cached manifest is stored yet.");
+        signal("versions_status").set("No versions loaded");
+        signal("versions_failed").set("1");
+        signal("versions_failed_text").set("Could not reach Mojang (" + detail + ") and no cached manifest is stored yet.");
     }
     return true;
 }
@@ -125,8 +125,8 @@ fn versions_apply(body: string) -> bool {
         }
     }
     if done == false {
-        lumen::signal_set("versions_failed", "1");
-        lumen::signal_set("versions_failed_text", "The version manifest could not be read.");
+        signal("versions_failed").set("1");
+        signal("versions_failed_text").set("The version manifest could not be read.");
     }
     return done;
 }
@@ -136,11 +136,11 @@ fn versions_read_latest(root) -> bool {
         let latest = as_map(root.get("latest"));
         if latest.contains("release") {
             let release = as_str(latest.get("release"));
-            lumen::signal_set("versions_latest_release", release);
+            signal("versions_latest_release").set(release);
         }
         if latest.contains("snapshot") {
             let snapshot = as_str(latest.get("snapshot"));
-            lumen::signal_set("versions_latest_snapshot", snapshot);
+            signal("versions_latest_snapshot").set(snapshot);
         }
     }
     return true;
@@ -159,33 +159,40 @@ fn versions_read_list(root) -> bool {
         m.insert("date", date);
         rows.push(entry);
     }
-    lumen::signal_array_set("versions_all", rows);
-    let generation = lumen::signal_get_int("versions_generation");
+    signal_array("versions_all").set(rows);
+    let generation = signal("versions_generation").get_int();
     let next = generation + 1;
-    lumen::signal_set("versions_generation", str(next));
+    signal("versions_generation").set(str(next));
     return true;
 }
 
 // Derived from the filter controls and the load counter, so a change to any of
 // them rebuilds the visible list. The return value is the row-count label.
 fn versions_recount(kind: string, query: string, generation: string) -> string {
-    let total = lumen::signal_array_len("versions_all");
+    let total = signal_array("versions_all").len();
     if total == 0 {
-        lumen::signal_array_clear("versions_view");
+        signal_array("versions_view").clear();
         return "";
     }
     let trimmed = query.trim();
     let needle = trimmed.lowercase();
-    let all = as_list(lumen::signal_array_all("versions_all"));
+    let installed = versions_installed_ids();
+    let all = as_list(signal_array("versions_all").all());
     let view = [];
     for entry in all {
         let m = as_map(entry);
         let kept = versions_matches(m, kind, needle);
         if kept {
+            let id = as_str(m.get("id"));
+            if installed.contains("|" + id + "|") {
+                m.insert("install_label", "Installed");
+            } else {
+                m.insert("install_label", "Install");
+            }
             view.push(entry);
         }
     }
-    lumen::signal_array_set("versions_view", view);
+    signal_array("versions_view").set(view);
     let shown = view.len();
     if shown == total {
         return str(total) + " versions";
@@ -221,6 +228,27 @@ fn versions_matches(m, kind: string, needle: string) -> bool {
     return keep;
 }
 
+// One directory listing, joined into a string the row loop can search. Asking
+// the filesystem once per visible row would mean hundreds of calls on every
+// keystroke in the search box.
+fn versions_installed_ids() -> string {
+    let names = files::list(versions_dir());
+    let joined = "|";
+    for name in names {
+        joined = joined + name + "|";
+    }
+    return joined;
+}
+
+// Called when an install finishes: bumping the generation re-runs the derived
+// view, which is what repaints the row's Install button as Installed.
+fn versions_mark_installed() -> bool {
+    let generation = signal("versions_generation").get_int();
+    let next = generation + 1;
+    signal("versions_generation").set(str(next));
+    return true;
+}
+
 fn versions_refresh_clicked(id: string) -> bool {
     versions_request();
     return true;
@@ -229,8 +257,8 @@ fn versions_refresh_clicked(id: string) -> bool {
 // Seam: creating the instance belongs to the instances page. All this does is
 // record which version the user picked.
 fn versions_choose(version: string) -> bool {
-    lumen::signal_set("versions_chosen", version);
-    lumen::signal_set("versions_chosen_text", "Selected " + version + " for a new instance.");
+    signal("versions_chosen").set(version);
+    signal("versions_chosen_text").set("Selected " + version + " for a new instance.");
     return true;
 }
 
@@ -244,7 +272,7 @@ fn versions_use_clicked(id: string) -> bool {
 }
 
 fn versions_use_latest_release(id: string) -> bool {
-    let version = lumen::signal_get("versions_latest_release");
+    let version = signal("versions_latest_release").get();
     if version != "" {
         versions_choose(version);
     }
@@ -252,7 +280,7 @@ fn versions_use_latest_release(id: string) -> bool {
 }
 
 fn versions_use_latest_snapshot(id: string) -> bool {
-    let version = lumen::signal_get("versions_latest_snapshot");
+    let version = signal("versions_latest_snapshot").get();
     if version != "" {
         versions_choose(version);
     }
@@ -260,7 +288,7 @@ fn versions_use_latest_snapshot(id: string) -> bool {
 }
 
 fn versions_clear_choice(id: string) -> bool {
-    lumen::signal_set("versions_chosen", "");
-    lumen::signal_set("versions_chosen_text", "");
+    signal("versions_chosen").set("");
+    signal("versions_chosen_text").set("");
     return true;
 }

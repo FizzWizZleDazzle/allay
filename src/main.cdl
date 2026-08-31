@@ -1,0 +1,150 @@
+import "lumen.cdl";
+
+// The app shell: where things are kept on disk, the settings the user can
+// change, and the handlers the sidebar needs.
+//
+// Every path the launcher writes hangs off files::data_dir(), which is
+// per-app and created on first use. The app directory itself is read-only
+// once the launcher is installed, so nothing is written beside the markup.
+
+// --- Where things live -------------------------------------------------------
+
+fn settings_path() -> string {
+    return files::data_dir() + "/settings.json";
+}
+
+fn instances_path() -> string {
+    return files::data_dir() + "/instances.json";
+}
+
+fn manifest_cache_path() -> string {
+    return files::data_dir() + "/version-manifest.cache";
+}
+
+// One directory per installed version, holding its jar and its metadata.
+fn versions_dir() -> string {
+    return files::data_dir() + "/versions";
+}
+
+// Shared between versions, keyed by the maven path Mojang publishes.
+fn libraries_dir() -> string {
+    return files::data_dir() + "/libraries";
+}
+
+// Native libraries, unpacked per version because they are platform jars.
+fn natives_dir() -> string {
+    return files::data_dir() + "/natives";
+}
+
+// The asset index and the objects it names, shared between versions.
+fn assets_dir() -> string {
+    return files::data_dir() + "/assets";
+}
+
+// One game directory per instance, passed to the game as --gameDir.
+fn instances_dir() -> string {
+    return files::data_dir() + "/instances";
+}
+
+fn make_dirs() -> bool {
+    files::mkdir(versions_dir());
+    files::mkdir(libraries_dir());
+    files::mkdir(natives_dir());
+    files::mkdir(assets_dir() + "/indexes");
+    files::mkdir(assets_dir() + "/objects");
+    files::mkdir(instances_dir());
+    return true;
+}
+
+// --- Lifecycle ---------------------------------------------------------------
+
+// Allay is dark only, so the scheme is set once and never read back.
+fn on_start() {
+    lumen::set_color_scheme("force-dark");
+    make_dirs();
+    load_settings();
+
+    let status = signal("status");
+    status.set("Ready");
+    signal("data_dir_label").set("Everything Allay writes lives in " + files::data_dir());
+
+    lumen::derive("settings_saved",
+                  ["jvm_memory", "jvm_args", "game_dir"],
+                  "save_settings");
+    lumen::derive("jvm_memory_label", ["jvm_memory"], "format_memory");
+}
+
+// One on_ready exists across the whole app; every page's setup hangs off it.
+fn on_ready() {
+    versions_init();
+    install_init();
+    instances_init();
+    launch_init();
+}
+
+// --- Settings ----------------------------------------------------------------
+
+fn load_settings() -> bool {
+    let memory = 6144.0;
+    let args = "";
+    let dir = "";
+
+    let raw = files::read(settings_path());
+    if raw.trim() != "" {
+        let parsed = lumen::parse_json(raw);
+        if is_map(parsed) {
+            let cfg = as_map(parsed);
+            if cfg.contains("jvm_memory") {
+                memory = float(as_str(cfg.get("jvm_memory")));
+            }
+            if cfg.contains("jvm_args") {
+                args = as_str(cfg.get("jvm_args"));
+            }
+            if cfg.contains("game_dir") {
+                dir = as_str(cfg.get("game_dir"));
+            }
+        }
+    }
+
+    signal("jvm_memory").set_float(memory);
+    signal("jvm_args").set(args);
+    signal("game_dir").set(dir);
+    return true;
+}
+
+fn save_settings(memory: float, args: string, dir: string) -> string {
+    let mb = str((int(memory) / 1024) * 1024);
+    let cfg = {"jvm_memory": mb, "jvm_args": args, "game_dir": dir};
+    let text = json_stringify(cfg);
+    files::write(settings_path(), text);
+    return text;
+}
+
+fn format_memory(memory: float) -> string {
+    let gb = int(memory) / 1024;
+    return str(gb) + " GB";
+}
+
+// --- Shell handlers ----------------------------------------------------------
+
+fn on_click(id: string) {
+    let status = signal("status");
+    if id == "browse-dir" {
+        lumen::pick_folder("game-dir");
+    } else if id == "new-instance" {
+        lumen::page("/instances");
+    } else if id == "sign-in" {
+        status.set("Accounts are not wired up yet");
+    }
+}
+
+fn on_folder_picked(tag: string, path: string) {
+    if tag == "game-dir" {
+        if path != "" {
+            signal("game_dir").set(path);
+            signal("status").set("Game directory set");
+        }
+    }
+}
+
+fn main() {}
