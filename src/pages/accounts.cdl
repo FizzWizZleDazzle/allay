@@ -1,0 +1,565 @@
+import "lumen.cdl";
+
+// Signing in to a Microsoft account.
+//
+// Allay uses the device-code flow published for Minecraft for Nintendo Switch
+// (client id 00000000441CC96B). Mojang stopped taking registrations for new
+// launcher applications, so a launcher that is not one of theirs has no client
+// id of its own to offer; this is the id the open-source launchers settled on.
+// A client id is a public identifier rather than a secret, and the account
+// being signed in is the user's own: Allay never sees the password, only the
+// tokens Microsoft hands back after the user approves the code in a browser.
+//
+// The flow is five chained requests, each one feeding the next:
+//
+//   1. login.live.com/oauth20_connect.srf   -> device code + user code
+//   2. login.live.com/oauth20_token.srf     -> Microsoft access token (polled)
+//   3. user.auth.xboxlive.com/user/authenticate -> Xbox Live token + user hash
+//   4. xsts.auth.xboxlive.com/xsts/authorize    -> XSTS token
+//   5. api.minecraftservices.com/authentication/login_with_xbox -> game token
+//
+// then a sixth request reads the profile for the name and UUID the game is
+// launched with. Every step is one lumen::http call routed back by tag.
+//
+// Tokens are written to accounts.json in the app's data directory in the
+// clear. Lumen has no keyring binding, so there is nowhere better to put them
+// yet; the file is in a per-user directory and nothing else in the app reads
+// it.
+
+fn accounts_client_id() -> string {
+    return "00000000441CC96B";
+}
+
+fn accounts_scope() -> string {
+    return "service::user.auth.xboxlive.com::MBI_SSL";
+}
+
+fn accounts_store_path() -> string {
+    return files::data_dir() + "/accounts.json";
+}
+
+fn accounts_empty_doc() -> string {
+    return "{\"version\":1,\"active\":\"\",\"next_seq\":1,\"accounts\":[]}";
+}
+
+// --- Setup -------------------------------------------------------------------
+
+fn accounts_init() -> bool {
+    lumen::on("click", "account-signin", "accounts_signin_clicked");
+    lumen::on("click", "account-cancel", "accounts_cancel_clicked");
+    lumen::on("click", "account-copy-code", "accounts_copy_code");
+    lumen::on("click", "account-open-browser", "accounts_open_browser");
+    lumen::on("click", "use-account", "accounts_use_clicked");
+    lumen::on("click", "drop-account", "accounts_drop_clicked");
+    lumen::on("timer", "account-poll", "accounts_poll_tick");
+
+    lumen::on("http", "msa-devicecode", "accounts_on_devicecode");
+    lumen::on("http", "msa-token", "accounts_on_token");
+    lumen::on("http", "xbl-auth", "accounts_on_xbl");
+    lumen::on("http", "xsts-auth", "accounts_on_xsts");
+    lumen::on("http", "mc-login", "accounts_on_mc_login");
+    lumen::on("http", "mc-profile", "accounts_on_profile");
+
+    signal("account_flow").set("");
+    signal("account_status").set("");
+    signal("account_code").set("");
+    signal("account_url").set("");
+    accounts_refresh();
+    return true;
+}
+
+// --- Storage ------------------------------------------------------------------
+
+fn accounts_read_doc() {
+    let text = files::read(accounts_store_path());
+    if text.trim() == "" {
+        text = accounts_empty_doc();
+    }
+    let parsed = lumen::parse_json(text);
+    if is_map(parsed) == false {
+        parsed = lumen::parse_json(accounts_empty_doc());
+    }
+    return parsed;
+}
+
+fn accounts_list_of(d) {
+    let m = as_map(d);
+    return as_list(m.get("accounts"));
+}
+
+fn accounts_persist(d) -> bool {
+    let text = json_stringify(d);
+    return files::write(accounts_store_path(), text);
+}
+
+// Rebuilds the rows the accounts page renders and the summary the sidebar
+// shows, so both read from one place.
+fn accounts_refresh() -> bool {
+    let d = accounts_read_doc();
+    let m = as_map(d);
+    let active = as_str(m.get("active"));
+    let list = accounts_list_of(d);
+    let rows = [];
+    let active_name = "Not signed in";
+    let active_kind = "No account selected";
+
+    for entry in list {
+        let a = as_map(entry);
+        let id = as_str(a.get("id"));
+        if id == active {
+            map_put(a, "state", "Active");
+            active_name = as_str(a.get("name"));
+            active_kind = accounts_kind_label(as_str(a.get("type")));
+        } else {
+            map_put(a, "state", "");
+        }
+        map_put(a, "kind_label", accounts_kind_label(as_str(a.get("type"))));
+        rows.push(entry);
+    }
+
+    signal_array("accounts").set(rows);
+    signal("accounts_empty").set("");
+    if rows.len() == 0 {
+        signal("accounts_empty").set("1");
+    }
+    signal("account_name").set(active_name);
+    signal("account_kind").set(active_kind);
+    home_refresh();
+    return true;
+}
+
+fn accounts_kind_label(kind: string) -> string {
+    if kind == "msa" {
+        return "Microsoft account";
+    }
+    return "Offline";
+}
+
+// The account the launcher plays as. Empty fields mean nobody is signed in,
+// and launch falls back to offline play.
+fn accounts_active() {
+    let d = accounts_read_doc();
+    let m = as_map(d);
+    let active = as_str(m.get("active"));
+    let list = accounts_list_of(d);
+    let found = lumen::parse_json("{}");
+    for entry in list {
+        let a = as_map(entry);
+        if as_str(a.get("id")) == active {
+            found = entry;
+        }
+    }
+    return found;
+}
+
+// --- Starting the flow ---------------------------------------------------------
+
+fn accounts_signin_clicked(id: string) -> bool {
+    if signal("account_flow").get() != "" {
+        return false;
+    }
+    signal("account_flow").set("devicecode");
+    signal("account_status").set("Asking Microsoft for a code...");
+    signal("account_code").set("");
+
+    let body = "client_id=" + accounts_client_id()
+             + "&scope=" + accounts_scope()
+             + "&response_type=device_code";
+    accounts_post_form("https://login.live.com/oauth20_connect.srf", body, "msa-devicecode");
+    return true;
+}
+
+fn accounts_cancel_clicked(id: string) -> bool {
+    lumen::cancel_timer("account-poll");
+    signal("account_flow").set("");
+    signal("account_status").set("");
+    signal("account_code").set("");
+    return true;
+}
+
+fn accounts_copy_code(id: string) -> bool {
+    lumen::clipboard_write(signal("account_code").get());
+    signal("account_status").set("Code copied. Enter it in the browser.");
+    return true;
+}
+
+fn accounts_open_browser(id: string) -> bool {
+    lumen::open_url(signal("account_url").get());
+    return true;
+}
+
+// --- Request helpers ------------------------------------------------------------
+
+// A request spec is built by parsing a small JSON template and inserting the
+// body, so a payload that is itself JSON never has to be escaped into a
+// candela string literal twice.
+fn accounts_request(url: string, tag: string, content_type: string, body: string) -> bool {
+    let spec = lumen::parse_json("{\"method\":\"POST\",\"timeout_ms\":30000}");
+    let m = as_map(spec);
+    map_put(m, "url", url);
+    map_put(m, "tag", tag);
+    map_put(m, "body", body);
+    let headers = as_map(lumen::parse_json("{}"));
+    map_put(headers, "Content-Type", content_type);
+    map_put(headers, "Accept", "application/json");
+    map_put(m, "headers", headers);
+    lumen::http(spec);
+    return true;
+}
+
+fn accounts_post_form(url: string, body: string, tag: string) -> bool {
+    return accounts_request(url, tag, "application/x-www-form-urlencoded", body);
+}
+
+fn accounts_post_json(url: string, body: string, tag: string) -> bool {
+    return accounts_request(url, tag, "application/json", body);
+}
+
+fn accounts_get(url: string, tag: string, bearer: string) -> bool {
+    let spec = lumen::parse_json("{\"method\":\"GET\",\"timeout_ms\":30000}");
+    let m = as_map(spec);
+    map_put(m, "url", url);
+    map_put(m, "tag", tag);
+    let headers = as_map(lumen::parse_json("{}"));
+    map_put(headers, "Authorization", "Bearer " + bearer);
+    map_put(headers, "Accept", "application/json");
+    map_put(m, "headers", headers);
+    lumen::http(spec);
+    return true;
+}
+
+// Every step reads its reply the same way, and a step that cannot be read ends
+// the flow rather than leaving the panel spinning.
+fn accounts_body_of(response: any) {
+    let r = as_map(response);
+    let body = as_str(r.get("body"));
+    if body == "" {
+        return lumen::parse_json("{}");
+    }
+    let parsed = lumen::parse_json(body);
+    if is_map(parsed) == false {
+        return lumen::parse_json("{}");
+    }
+    return parsed;
+}
+
+fn accounts_fail(message: string) -> bool {
+    lumen::cancel_timer("account-poll");
+    signal("account_flow").set("");
+    signal("account_status").set(message);
+    return false;
+}
+
+// --- 1. Device code ------------------------------------------------------------
+
+fn accounts_on_devicecode(tag: string, response: any) -> bool {
+    let r = as_map(response);
+    if as_bool(r.get("ok")) == false {
+        return accounts_fail("Microsoft would not issue a code");
+    }
+    let body = as_map(accounts_body_of(response));
+    if body.contains("device_code") == false {
+        return accounts_fail("Microsoft's reply carried no device code");
+    }
+
+    signal("account_device_code").set(as_str(body.get("device_code")));
+    signal("account_code").set(as_str(body.get("user_code")));
+    signal("account_url").set(as_str(body.get("verification_uri")));
+    signal("account_flow").set("waiting");
+    signal("account_status").set("Enter the code in your browser, then wait here.");
+
+    let interval = 5;
+    if body.contains("interval") {
+        interval = as_int(body.get("interval"));
+    }
+    signal("account_interval").set_int(interval);
+    lumen::set_timeout("account-poll", interval * 1000);
+    return true;
+}
+
+// --- 2. Token, polled ------------------------------------------------------------
+
+fn accounts_poll_tick(name: string) -> bool {
+    if signal("account_flow").get() != "waiting" {
+        return false;
+    }
+    let body = "client_id=" + accounts_client_id()
+             + "&device_code=" + signal("account_device_code").get()
+             + "&grant_type=urn:ietf:params:oauth:grant-type:device_code";
+    accounts_post_form("https://login.live.com/oauth20_token.srf", body, "msa-token");
+    return true;
+}
+
+fn accounts_on_token(tag: string, response: any) -> bool {
+    let body = as_map(accounts_body_of(response));
+
+    // The pending reply is an HTTP error carrying a named reason, so the error
+    // name decides whether to keep waiting rather than the status alone.
+    if body.contains("error") {
+        let err = as_str(body.get("error"));
+        if err == "authorization_pending" {
+            let interval = signal("account_interval").get_int();
+            lumen::set_timeout("account-poll", interval * 1000);
+            return true;
+        }
+        if err == "slow_down" {
+            let slower = signal("account_interval").get_int() + 5;
+            signal("account_interval").set_int(slower);
+            lumen::set_timeout("account-poll", slower * 1000);
+            return true;
+        }
+        if err == "authorization_declined" {
+            return accounts_fail("Sign-in was declined");
+        }
+        if err == "expired_token" {
+            return accounts_fail("The code expired before it was entered");
+        }
+        return accounts_fail("Microsoft refused the sign-in: " + err);
+    }
+
+    if body.contains("access_token") == false {
+        return accounts_fail("Microsoft's reply carried no token");
+    }
+
+    signal("account_msa_token").set(as_str(body.get("access_token")));
+    if body.contains("refresh_token") {
+        signal("account_refresh_token").set(as_str(body.get("refresh_token")));
+    }
+    signal("account_flow").set("xbox");
+    signal("account_status").set("Signing in to Xbox Live...");
+
+    let payload = "{\"Properties\":{\"AuthMethod\":\"RPS\",\"SiteName\":\"user.auth.xboxlive.com\",\"RpsTicket\":\""
+                + signal("account_msa_token").get()
+                + "\"},\"RelyingParty\":\"http://auth.xboxlive.com\",\"TokenType\":\"JWT\"}";
+    accounts_post_json("https://user.auth.xboxlive.com/user/authenticate", payload, "xbl-auth");
+    return true;
+}
+
+// --- 3. Xbox Live ----------------------------------------------------------------
+
+fn accounts_on_xbl(tag: string, response: any) -> bool {
+    let r = as_map(response);
+    if as_bool(r.get("ok")) == false {
+        return accounts_fail("Xbox Live refused the token");
+    }
+    let body = as_map(accounts_body_of(response));
+    if body.contains("Token") == false {
+        return accounts_fail("Xbox Live returned no token");
+    }
+    let token = as_str(body.get("Token"));
+    signal("account_xbl_token").set(token);
+    signal("account_uhs").set(accounts_user_hash(body));
+    signal("account_status").set("Authorising for Minecraft...");
+
+    let payload = "{\"Properties\":{\"SandboxId\":\"RETAIL\",\"UserTokens\":[\""
+                + token
+                + "\"]},\"RelyingParty\":\"rp://api.minecraftservices.com/\",\"TokenType\":\"JWT\"}";
+    accounts_post_json("https://xsts.auth.xboxlive.com/xsts/authorize", payload, "xsts-auth");
+    return true;
+}
+
+// The user hash travels in a nested claim list rather than as a plain field.
+fn accounts_user_hash(body) -> string {
+    if body.contains("DisplayClaims") == false {
+        return "";
+    }
+    let claims = as_map(body.get("DisplayClaims"));
+    if claims.contains("xui") == false {
+        return "";
+    }
+    let xui = as_list(claims.get("xui"));
+    let hash = "";
+    for entry in xui {
+        let e = as_map(entry);
+        if e.contains("uhs") {
+            hash = as_str(e.get("uhs"));
+        }
+    }
+    return hash;
+}
+
+// --- 4. XSTS ----------------------------------------------------------------------
+
+fn accounts_on_xsts(tag: string, response: any) -> bool {
+    let r = as_map(response);
+    let body = as_map(accounts_body_of(response));
+    if as_bool(r.get("ok")) == false {
+        return accounts_fail(accounts_xsts_reason(body));
+    }
+    if body.contains("Token") == false {
+        return accounts_fail("Xbox Live returned no authorisation");
+    }
+    let xsts = as_str(body.get("Token"));
+    let uhs = signal("account_uhs").get();
+    if uhs == "" {
+        uhs = accounts_user_hash(body);
+    }
+    signal("account_status").set("Signing in to Minecraft...");
+
+    let payload = "{\"identityToken\":\"XBL3.0 x=" + uhs + ";" + xsts + "\"}";
+    accounts_post_json("https://api.minecraftservices.com/authentication/login_with_xbox",
+                       payload, "mc-login");
+    return true;
+}
+
+// XSTS says why it refused with a numeric code, and the common ones are worth
+// spelling out because the fix is different for each.
+fn accounts_xsts_reason(body) -> string {
+    if body.contains("XErr") == false {
+        return "Xbox Live refused the authorisation";
+    }
+    let code = as_str(body.get("XErr"));
+    if code == "2148916233" {
+        return "This Microsoft account has no Xbox profile. Create one at xbox.com, then sign in again.";
+    }
+    if code == "2148916235" {
+        return "Xbox Live is not available in this account's country.";
+    }
+    if code == "2148916238" {
+        return "This account is a child account and needs to be added to a family.";
+    }
+    return "Xbox Live refused the authorisation (" + code + ")";
+}
+
+// --- 5. Minecraft token, then the profile ------------------------------------------
+
+fn accounts_on_mc_login(tag: string, response: any) -> bool {
+    let r = as_map(response);
+    if as_bool(r.get("ok")) == false {
+        return accounts_fail("Minecraft services refused the sign-in");
+    }
+    let body = as_map(accounts_body_of(response));
+    if body.contains("access_token") == false {
+        return accounts_fail("Minecraft services returned no token");
+    }
+    signal("account_mc_token").set(as_str(body.get("access_token")));
+    signal("account_status").set("Reading the profile...");
+    accounts_get("https://api.minecraftservices.com/minecraft/profile",
+                 "mc-profile", signal("account_mc_token").get());
+    return true;
+}
+
+fn accounts_on_profile(tag: string, response: any) -> bool {
+    let r = as_map(response);
+    let status = as_int(r.get("status"));
+    if status == 404 {
+        return accounts_fail("This account does not own Minecraft: Java Edition.");
+    }
+    if as_bool(r.get("ok")) == false {
+        return accounts_fail("The Minecraft profile could not be read");
+    }
+    let body = as_map(accounts_body_of(response));
+    if body.contains("name") == false {
+        return accounts_fail("The Minecraft profile carried no name");
+    }
+    return accounts_store(as_str(body.get("name")), accounts_dash_uuid(as_str(body.get("id"))));
+}
+
+// The profile gives a UUID with the dashes stripped; the game wants them back.
+fn accounts_dash_uuid(raw: string) -> string {
+    if raw.len() != 32 {
+        return raw;
+    }
+    return raw[..8] + "-" + raw[8..12] + "-" + raw[12..16] + "-" + raw[16..20] + "-" + raw[20..32];
+}
+
+// Signing in to an account that is already stored replaces its tokens rather
+// than adding a second copy of the same player.
+fn accounts_store(name: string, uuid: string) -> bool {
+    let d = accounts_read_doc();
+    let m = as_map(d);
+    let list = accounts_list_of(d);
+
+    let at = -1;
+    let i = 0;
+    for entry in list {
+        let a = as_map(entry);
+        if as_str(a.get("uuid")) == uuid {
+            at = i;
+        }
+        i = i + 1;
+    }
+
+    let id = "acct-" + str(as_int(m.get("next_seq")));
+    if at >= 0 {
+        id = as_str(as_map(list[at]).get("id"));
+        list.remove(at);
+    } else {
+        map_put(m, "next_seq", as_int(m.get("next_seq")) + 1);
+    }
+
+    let record = lumen::parse_json("{}");
+    let rm = as_map(record);
+    map_put(rm, "id", id);
+    map_put(rm, "type", "msa");
+    map_put(rm, "name", name);
+    map_put(rm, "uuid", uuid);
+    map_put(rm, "access_token", signal("account_mc_token").get());
+    map_put(rm, "refresh_token", signal("account_refresh_token").get());
+    list.push(record);
+
+    map_put(m, "active", id);
+    accounts_persist(d);
+    accounts_clear_secrets();
+
+    signal("account_flow").set("");
+    signal("account_status").set("Signed in as " + name);
+    signal("status").set("Signed in as " + name);
+    accounts_refresh();
+    return true;
+}
+
+// The intermediate tokens have done their job by now, and there is no reason
+// to leave them in signals the devtools can read.
+fn accounts_clear_secrets() -> bool {
+    signal("account_device_code").set("");
+    signal("account_msa_token").set("");
+    signal("account_xbl_token").set("");
+    signal("account_uhs").set("");
+    signal("account_mc_token").set("");
+    signal("account_refresh_token").set("");
+    signal("account_code").set("");
+    return true;
+}
+
+// --- Picking and removing --------------------------------------------------------
+
+fn accounts_row_id(id: string) -> string {
+    let cut = id.find("|");
+    return id[cut + 1..id.len()];
+}
+
+fn accounts_use_clicked(id: string) -> bool {
+    let acct = accounts_row_id(id);
+    let d = accounts_read_doc();
+    let m = as_map(d);
+    map_put(m, "active", acct);
+    accounts_persist(d);
+    accounts_refresh();
+    return true;
+}
+
+fn accounts_drop_clicked(id: string) -> bool {
+    let acct = accounts_row_id(id);
+    let d = accounts_read_doc();
+    let m = as_map(d);
+    let list = accounts_list_of(d);
+    let at = -1;
+    let i = 0;
+    for entry in list {
+        if as_str(as_map(entry).get("id")) == acct {
+            at = i;
+        }
+        i = i + 1;
+    }
+    if at < 0 {
+        return false;
+    }
+    list.remove(at);
+    if as_str(m.get("active")) == acct {
+        map_put(m, "active", "");
+    }
+    accounts_persist(d);
+    accounts_refresh();
+    return true;
+}

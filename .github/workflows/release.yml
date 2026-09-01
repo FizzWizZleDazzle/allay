@@ -1,0 +1,75 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: write
+
+jobs:
+  package:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: ubuntu-latest
+            target: linux-x86_64
+          - os: macos-14
+            target: macos-aarch64
+          - os: macos-13
+            target: macos-x86_64
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install the Lumen toolchain
+        run: |
+          curl -fsSL https://lumenfx.dev/install.sh | sh -s -- --no-confirm --no-modify-path
+          echo "$HOME/.lumen/bin" >> "$GITHUB_PATH"
+
+      # The toolchain ships without the runtime modules, and Allay needs four of
+      # them. --static compiles them into the executable, and the link kit it
+      # pulls carries the libraries to link, so the module archive is only
+      # needed for the source run that `lumenc check` does first.
+      - name: Install the runtime modules
+        run: |
+          version="$(lumenc --version | awk '{print $2}')"
+          gh release download "v${version}" --repo lumen-fx/lumen \
+            --pattern "lumen-modules-${{ matrix.target }}.tar.gz" --dir /tmp
+          tar xzf "/tmp/lumen-modules-${{ matrix.target }}.tar.gz" -C "$HOME/.lumen"
+        env:
+          GH_TOKEN: ${{ github.token }}
+
+      - name: Check
+        run: lumenc check .
+
+      - name: Package
+        run: lumenc package . dist/allay --name allay --static
+
+      - name: Archive
+        run: |
+          tar czf "allay-${{ matrix.target }}.tar.gz" -C dist allay
+          shasum -a 256 "allay-${{ matrix.target }}.tar.gz" > "allay-${{ matrix.target }}.tar.gz.sha256"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: allay-${{ matrix.target }}
+          path: |
+            allay-${{ matrix.target }}.tar.gz
+            allay-${{ matrix.target }}.tar.gz.sha256
+
+  publish:
+    needs: package
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+
+      - name: Publish the release
+        run: gh release create "${GITHUB_REF_NAME}" artifacts/* --repo "${GITHUB_REPOSITORY}" --generate-notes
+        env:
+          GH_TOKEN: ${{ github.token }}

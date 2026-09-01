@@ -63,10 +63,8 @@
               <label class="instance-memory" font-size="12" text-color="#8a97a8" text="{row.memory_label}" />
             </row>
           </column>
-          <tooltip text="Launching needs process support, which Lumen does not have yet (lumen-fx/lumen#126)">
-            <button id="play|{row.id}" class="btn btn-play" bg="#233043" hover-bg="#2b3b52" press-bg="#1c2736"
-                    radius="6" padding="0 14" height="34px" text-color="#7f8b9a" text="Play" />
-          </tooltip>
+          <button id="play|{row.id}" class="btn btn-play" bg="#233043" hover-bg="#2b3b52" press-bg="#1c2736"
+                  radius="6" padding="0 14" height="34px" text-color="#7f8b9a" text="Play" />
           <button id="open|{row.id}" class="btn" bg="#232b36" hover-bg="#2c3543" press-bg="#1c232c"
                   radius="6" padding="0 12" height="34px" text-color="#c6d0dc" text="Details" />
           <button id="ren|{row.id}" class="btn" bg="#232b36" hover-bg="#2c3543" press-bg="#1c232c"
@@ -147,4 +145,5 @@
   </use>
 
   <script src="pages/instances.cdl" />
+  <script src="pages/launch.cdl" />
 </root>

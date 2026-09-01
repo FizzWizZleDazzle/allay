@@ -1,23 +1,20 @@
+import "lumen.cdl";
+import "std/time";
+
 // Instance manager: the list, the create flow, and the per-instance detail
 // panel on the instances page.
 //
 // The instance set is kept as one JSON document. `instances_doc` holds its
-// text, the `allay-instances.json` file holds the same text on disk, and the
-// `instances` array signal holds a decorated copy the <for> in instances.lmn
-// renders. Every mutation walks the same path: parse the document, change it,
-// write it back, refresh the rows.
+// text, `instances.json` in the app's data directory holds the same text on
+// disk, and the `instances` array signal holds a decorated copy the <for> in
+// instances.lmn renders. Every mutation walks the same path: parse the
+// document, change it, write it back, refresh the rows.
 //
 // Every handler is bound to one element id through lumen::on, so this file
 // defines no global on_click / on_text_input and no on_ready: the app-wide
 // on_ready calls instances_init() once.
 //
 // Signal reads and writes go through the signal() and signal_array() handles.
-//
-// Every early exit returns a value. A bare `return;` inside an `if` block does
-// not leave the function under candela 0.0.5; control falls through it.
-//
-// The `import "lumen.cdl"` line lives in pages/versions.cdl. The app's .cdl
-// files compile as one program and the prelude can only be pulled in once.
 
 // A map read out of parse_json is typed `any`, so calling insert straight on
 // one resolves the list overload; passing it through an untyped parameter
@@ -28,12 +25,8 @@ fn map_put(m, k, v) {
 
 // --- Storage -----------------------------------------------------------------
 
-// read_file and write_file resolve a relative path against the process working
-// directory, and no builtin reports a per-user data directory, so the store
-// sits beside wherever the launcher was started. Point it at a per-user
-// application data directory once Lumen exposes one.
 fn instances_store_path() -> string {
-    return "allay-instances.json";
+    return instances_path();
 }
 
 fn instances_empty_doc() -> string {
@@ -71,7 +64,7 @@ fn instances_persist(d) -> bool {
     let text = json_stringify(d);
     signal("instances_doc").set(text);
     let path = instances_store_path();
-    let ok = lumen::write_file(path, text);
+    let ok = files::write(path, text);
     if !ok {
         signal("instances_status").set("Could not write " + path);
     }
@@ -120,6 +113,7 @@ fn instances_refresh(d) -> bool {
             signal("instances_count_label").set(str(n) + " instances");
         }
     }
+    home_refresh();
     return true;
 }
 
@@ -177,7 +171,8 @@ fn instances_name_of(list, id: string) -> string {
 fn instances_record_text(id: string, name: string, version: string) -> string {
     let clean = name.replace("\"", "'");
     return "{\"id\":\"" + id + "\",\"name\":\"" + clean + "\",\"game_version\":\"" + version
-        + "\",\"loader\":\"vanilla\",\"memory_mb\":2048,\"notes\":\"\",\"created\":\"\",\"last_played\":\"\"}";
+        + "\",\"loader\":\"vanilla\",\"memory_mb\":2048,\"notes\":\"\",\"created\":\""
+        + format(now(), "%Y-%m-%d %H:%M") + "\",\"last_played\":\"\"}";
 }
 
 // The versions page writes its pick to `versions_chosen`, so opening the form
@@ -234,15 +229,40 @@ fn instances_create_confirm(id: string) -> bool {
 
 // --- Play --------------------------------------------------------------------
 
-// Launching the game means starting a process, which Lumen cannot do
-// (lumen-fx/lumen#126). The button says so rather than pretending.
 fn instances_play_clicked(id: string) -> bool {
     let iid = instances_row_id(id);
     let d = instances_read_doc();
     let list = instances_of(d);
-    let name = instances_name_of(list, iid);
-    let why = "Cannot launch " + name + " yet: Lumen has no process support (lumen-fx/lumen#126).";
-    signal("instances_status").set(why);
+    let at = instances_index_of(list, iid);
+    if at < 0 {
+        return false;
+    }
+    let m = as_map(list[at]);
+    let version = as_str(m.get("game_version"));
+    let memory = as_int(m.get("memory_mb"));
+    let name = as_str(m.get("name"));
+    signal("instances_status").set("Starting " + name + "...");
+    return launch_start(iid, version, memory);
+}
+
+// Called when the game exits, so the row shows when it was last played.
+fn instances_record_played(iid: string) -> bool {
+    if iid == "" {
+        return false;
+    }
+    let d = instances_read_doc();
+    let list = instances_of(d);
+    let at = instances_index_of(list, iid);
+    if at < 0 {
+        return false;
+    }
+    let m = as_map(list[at]);
+    map_put(m, "last_played", format(now(), "%Y-%m-%d %H:%M"));
+    instances_persist(d);
+    instances_refresh(d);
+    if signal("detail_id").get() == iid {
+        instances_show_detail(iid);
+    }
     return true;
 }
 
@@ -265,7 +285,6 @@ fn instances_show_detail(iid: string) -> bool {
     signal("detail_memory").set(str(mb));
     signal("detail_notes").set(as_str(m.get("notes")));
 
-    // No builtin reports the time, so both stamps stay empty for now.
     let created = as_str(m.get("created"));
     if created == "" {
         signal("detail_created_label").set("Created: not recorded");
@@ -493,7 +512,7 @@ fn instances_init() -> bool {
     signal("new_name").set("");
 
     let path = instances_store_path();
-    let stored = lumen::read_file(path);
+    let stored = files::read(path);
     signal("instances_doc").set(stored);
 
     let d = instances_read_doc();

@@ -11,25 +11,6 @@
 
       <column class="card" gap="0">
         <row class="card-head" align="center" gap="10">
-          <label class="card-title" grow="1" text="Appearance"/>
-        </row>
-        <tile class="divider" height="1px"/>
-        <column class="card-body" gap="18">
-          <row class="field" gap="20" align="center">
-            <column class="field-text" width="260px" gap="3">
-              <label class="field-label" text="Theme"/>
-              <label class="field-hint" wrap="word" text="The look Allay uses."/>
-            </column>
-            <dropdown id="theme-picker" class="control" width="200px" bind-value="theme">
-              <option value="Dark" label="Dark"/>
-              <option value="Light" label="Light"/>
-            </dropdown>
-          </row>
-        </column>
-      </column>
-
-      <column class="card" gap="0">
-        <row class="card-head" align="center" gap="10">
           <label class="card-title" grow="1" text="Java"/>
           <label class="badge badge-quiet" text="Applies to new launches"/>
         </row>
@@ -65,7 +46,7 @@
           <row class="field" gap="20" align="center">
             <column class="field-text" width="260px" gap="3">
               <label class="field-label" text="Game directory"/>
-              <label class="field-hint" wrap="word" text="Where instances, assets, and libraries live."/>
+              <label class="field-hint" wrap="word" text="Where saves and options are kept. Leave empty to use one directory per instance."/>
             </column>
             <label id="game-dir" class="path" grow="1" wrap="ellipsis"
                    bind-text="game_dir"/>
@@ -74,8 +55,8 @@
         </column>
       </column>
 
-      <label class="page-footnote" wrap="word"
-             text="Settings are stored in allay.json next to the app."/>
+      <label class="page-footnote" wrap="word" bind-text="data_dir_label"
+             text="Settings, versions, and instances are kept in Allay's data directory."/>
 
     </column>
   </use>

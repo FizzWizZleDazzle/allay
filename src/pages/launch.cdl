@@ -1,0 +1,278 @@
+import "lumen.cdl";
+
+// Starting the game. The version metadata already on disk says which class to
+// run, which jars belong on the classpath, and which arguments the game
+// expects; this file turns that into one process::start call and streams the
+// child's output into the instance panel.
+//
+// process::start gives the child the app directory as its working directory
+// and no environment of its own, so the per-instance directory is passed as
+// --gameDir rather than being the directory the game runs in. The game's own
+// log file still lands beside the launcher.
+
+// The player the game is launched as. With an account signed in these read
+// its profile; with none they fall back to offline play, which the game
+// accepts in singleplayer and on servers that do not check.
+fn launch_player() -> string {
+    let a = as_map(accounts_active());
+    if a.contains("name") {
+        return as_str(a.get("name"));
+    }
+    return "Player";
+}
+
+fn launch_uuid() -> string {
+    let a = as_map(accounts_active());
+    if a.contains("uuid") {
+        return as_str(a.get("uuid"));
+    }
+    return "0f4c1f2e-9a3b-4c5d-8e6f-7a8b9c0d1e2f";
+}
+
+fn launch_token() -> string {
+    let a = as_map(accounts_active());
+    if a.contains("access_token") {
+        return as_str(a.get("access_token"));
+    }
+    return "0";
+}
+
+// The game treats "msa" as a signed-in session and "legacy" as offline play.
+fn launch_user_type() -> string {
+    let a = as_map(accounts_active());
+    if a.contains("type") {
+        if as_str(a.get("type")) == "msa" {
+            return "msa";
+        }
+    }
+    return "legacy";
+}
+
+fn launch_init() -> bool {
+    signal("launch_running").set("");
+    signal("launch_instance").set("");
+    signal("launch_log").set("");
+    signal("java_version").set("");
+    // The probe's own output tells us whether java is on PATH at all.
+    let probe_args = ["-version"];
+    let started = process::start("java", probe_args, "java-probe");
+    if started == false {
+        signal("java_version").set("java was not found on PATH");
+    }
+    return true;
+}
+
+// --- Assembling the command ---------------------------------------------------
+
+fn launch_read_version(version: string) {
+    let raw = files::read(install_version_json(version));
+    return lumen::parse_json(raw);
+}
+
+// The classpath is every library this system is allowed plus the client jar.
+// Native jars are unpacked rather than loaded, so they stay off it.
+fn launch_classpath(root, version: string) -> string {
+    let cp = "";
+    if root.contains("libraries") {
+        let libs = as_list(root.get("libraries"));
+        for entry in libs {
+            let lib = as_map(entry);
+            if install_library_allowed(lib) == false {
+                continue;
+            }
+            let name = as_str(lib.get("name"));
+            if name.contains(":natives-") {
+                continue;
+            }
+            if lib.contains("downloads") == false {
+                continue;
+            }
+            let downloads = as_map(lib.get("downloads"));
+            if downloads.contains("artifact") == false {
+                continue;
+            }
+            let artifact = as_map(downloads.get("artifact"));
+            let path = libraries_dir() + "/" + as_str(artifact.get("path"));
+            cp = cp + path + ":";
+        }
+    }
+    return cp + install_client_jar(version);
+}
+
+fn launch_substitute(value: string, version: string, root, game_dir: string, classpath: string) -> string {
+    let asset_id = "";
+    if root.contains("assetIndex") {
+        let index = as_map(root.get("assetIndex"));
+        asset_id = as_str(index.get("id"));
+    }
+    let out = value;
+    out = out.replace("${auth_player_name}", launch_player());
+    out = out.replace("${version_name}", version);
+    out = out.replace("${game_directory}", game_dir);
+    out = out.replace("${assets_root}", assets_dir());
+    out = out.replace("${game_assets}", assets_dir());
+    out = out.replace("${assets_index_name}", asset_id);
+    out = out.replace("${auth_uuid}", launch_uuid());
+    out = out.replace("${auth_access_token}", launch_token());
+    out = out.replace("${auth_session}", launch_token());
+    out = out.replace("${clientid}", "");
+    out = out.replace("${auth_xuid}", "");
+    out = out.replace("${user_type}", launch_user_type());
+    out = out.replace("${user_properties}", "{}");
+    out = out.replace("${version_type}", as_str(root.get("type")));
+    out = out.replace("${natives_directory}", install_natives_dir(version));
+    out = out.replace("${launcher_name}", "allay");
+    out = out.replace("${launcher_version}", "0.1.0");
+    out = out.replace("${classpath_separator}", ":");
+    out = out.replace("${classpath}", classpath);
+    out = out.replace("${library_directory}", libraries_dir());
+    return out;
+}
+
+// An argument list mixes plain strings with objects carrying rules. The rules
+// gate optional features the launcher does not offer (demo mode, a forced
+// resolution), so only the plain strings are taken.
+fn launch_collect_args(args, out, version: string, root, game_dir: string, classpath: string) -> bool {
+    let items = as_list(args);
+    for item in items {
+        if is_str(item) {
+            let filled = launch_substitute(as_str(item), version, root, game_dir, classpath);
+            out.push(filled);
+        }
+    }
+    return true;
+}
+
+// --- Starting -----------------------------------------------------------------
+
+fn launch_start(instance_id: string, version: string, memory_mb: int) -> bool {
+    if signal("launch_running").get() != "" {
+        signal("status").set("A game is already running");
+        return false;
+    }
+    if install_is_installed(version) == false {
+        signal("status").set(version + " is not installed yet");
+        return false;
+    }
+
+    let parsed = launch_read_version(version);
+    if is_map(parsed) == false {
+        signal("status").set("The metadata for " + version + " could not be read");
+        return false;
+    }
+    let root = as_map(parsed);
+
+    let game_dir = launch_game_dir(instance_id);
+    files::mkdir(game_dir);
+
+    let classpath = launch_classpath(root, version);
+    let args = [];
+
+    if root.contains("arguments") {
+        let arguments = as_map(root.get("arguments"));
+        if arguments.contains("jvm") {
+            launch_collect_args(arguments.get("jvm"), args, version, root, game_dir, classpath);
+        }
+    } else {
+        // Versions older than 1.13 carry no jvm argument template, so the two
+        // settings the game needs are spelled out here instead.
+        args.push("-Djava.library.path=" + install_natives_dir(version));
+        args.push("-cp");
+        args.push(classpath);
+    }
+
+    args.push("-Xmx" + str(memory_mb) + "M");
+    let extra = signal("jvm_args").get();
+    if extra.trim() != "" {
+        let words = extra.split(" ");
+        for word in words {
+            if word != "" {
+                args.push(word);
+            }
+        }
+    }
+
+    args.push(as_str(root.get("mainClass")));
+
+    if root.contains("arguments") {
+        let arguments = as_map(root.get("arguments"));
+        if arguments.contains("game") {
+            launch_collect_args(arguments.get("game"), args, version, root, game_dir, classpath);
+        }
+    } else if root.contains("minecraftArguments") {
+        let legacy = as_str(root.get("minecraftArguments"));
+        let filled = launch_substitute(legacy, version, root, game_dir, classpath);
+        let words = filled.split(" ");
+        for word in words {
+            if word != "" {
+                args.push(word);
+            }
+        }
+    }
+
+    let tag = "game:" + instance_id;
+    signal("launch_log").set("");
+    let started = process::start("java", args, tag);
+    if started == false {
+        signal("status").set("java could not be started");
+        return false;
+    }
+    signal("launch_running").set(instance_id);
+    signal("launch_instance").set(instance_id);
+    signal("status").set("Launched " + version);
+    return true;
+}
+
+// One directory per instance unless the settings page names one to share.
+fn launch_game_dir(instance_id: string) -> string {
+    let configured = signal("game_dir").get();
+    if configured.trim() != "" {
+        return configured;
+    }
+    return instances_dir() + "/" + instance_id;
+}
+
+// --- The child's output --------------------------------------------------------
+
+// The panel keeps the tail of the log rather than all of it: a Minecraft run
+// writes tens of thousands of lines and the whole history is not worth a
+// signal write per line.
+fn launch_append(line: string) -> bool {
+    let log = signal("launch_log").get();
+    let joined = log + line + "\n";
+    if joined.len() > 8000 {
+        let cut = joined.len() - 8000;
+        joined = joined[cut..joined.len()];
+    }
+    signal("launch_log").set(joined);
+    return true;
+}
+
+fn on_process_stdout(tag: string, line: string) -> bool {
+    if tag == "java-probe" {
+        return true;
+    }
+    return launch_append(line);
+}
+
+fn on_process_stderr(tag: string, line: string) -> bool {
+    if tag == "java-probe" {
+        // `java -version` writes its banner to stderr; the first line names it.
+        if signal("java_version").get() == "" {
+            signal("java_version").set(line);
+        }
+        return true;
+    }
+    return launch_append(line);
+}
+
+fn on_process_exit(tag: string, code: int) -> bool {
+    if tag == "java-probe" {
+        return true;
+    }
+    signal("launch_running").set("");
+    let instance = signal("launch_instance").get();
+    signal("status").set("The game exited with code " + str(code));
+    instances_record_played(instance);
+    return true;
+}

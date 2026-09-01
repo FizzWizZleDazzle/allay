@@ -40,6 +40,18 @@
       </row>
     </if>
 
+    <if signal="install_id">
+      <column class="versions-install" gap="8">
+        <row align="center" gap="10">
+          <label class="versions-install-title" bind-text="install_id"/>
+          <label class="versions-install-status" grow="1" bind-text="install_status"/>
+          <button id="install-cancel" class="btn btn-quiet" text="Dismiss"/>
+        </row>
+        <progress class="versions-install-bar" max="100" bind-value="install_percent"/>
+        <label class="versions-install-error" wrap="word" bind-text="install_error"/>
+      </column>
+    </if>
+
     <if signal="versions_failed">
       <column class="versions-failed" gap="8" padding="12" radius="8">
         <label bind-text="versions_failed_text"/>
@@ -49,18 +61,20 @@
       </column>
     </if>
 
-    <scroll class="versions-list" grow="1">
-      <for each="versions_view" key="id">
+    <column class="versions-list">
+      <for each="versions_view" key="id" virtualized="true" row-height="39">
         <row class="versions-row" align="center" gap="12" padding="6">
           <label class="versions-row-id" width="240" wrap="ellipsis" text="{row.id}"/>
           <label class="versions-row-type" width="120" text="{row.type}"/>
           <label class="versions-row-date" grow="1" text="{row.date}"/>
+          <button id="{row.id}:install" class="versions-row-install" text="{row.install_label}"/>
           <button id="{row.id}:use" class="versions-row-use" text="Use for new instance"/>
         </row>
       </for>
-    </scroll>
+    </column>
 
     <script src="pages/versions.cdl"/>
+    <script src="pages/install.cdl"/>
   </column>
   </use>
 </root>

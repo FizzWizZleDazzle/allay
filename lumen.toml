@@ -7,15 +7,19 @@ title = "Allay"
 size = [1180, 760]
 remember_state = true
 
-[signals]
-theme = "string"
-jvm_memory = "f64"
-jvm_memory_label = "string"
-jvm_args = "string"
-game_dir = "string"
-settings_saved = "string"
-status = "string"
-
 [pages]
 enabled = true
-include = ["main.lmn", "pages/settings.lmn", "pages/versions.lmn", "pages/instances.lmn"]
+include = ["main.lmn", "pages/settings.lmn", "pages/versions.lmn", "pages/instances.lmn", "pages/accounts.lmn"]
+
+# Background art and icons. Code lives in src/; everything the app ships as
+# data stays at the root.
+[asset_roots]
+paths = ["assets"]
+
+# Installing a Minecraft version means writing files, fetching a few thousand
+# of them, unpacking the native libraries, and starting a JVM.
+[dependencies]
+lumen-fs = { bundled = true }
+lumen-download = { bundled = true, config = { max_concurrent = 16 } }
+lumen-archive = { bundled = true }
+lumen-process = { bundled = true }

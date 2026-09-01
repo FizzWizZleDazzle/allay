@@ -1,11 +1,20 @@
 <root>
   <template name="shell" active="home">
     <column class="shell shell-{active}" width="100%" height="100%">
+
+      <!-- The art covers the whole window, sidebar and status bar included, so
+           every panel veils one image instead of each cutting its own hole. -->
+      <overlay class="bg-art">
+        <image class="bg-image" src="bg/panorama.png" alt="" fit="cover"
+               width="100%" height="100%"/>
+      </overlay>
+      <overlay class="bg-scrim"/>
+
       <row class="shell-body" width="100%" grow="1">
 
         <column class="sidebar" width="236px" height="100%">
           <row class="brand" align="center" gap="12">
-            <tile class="brand-mark" width="30px" height="30px"/>
+            <image class="brand-mark" src="icons/allay.svg" alt="" width="30px" height="30px"/>
             <column gap="1">
               <label class="brand-name" text="Allay"/>
               <label class="brand-tag" text="Minecraft launcher"/>
@@ -28,6 +37,10 @@
               <tile class="nav-rail" width="3px"/>
               <label class="nav-label" text="Versions"/>
             </a>
+            <a id="nav-accounts" class="nav-item" href="/accounts">
+              <tile class="nav-rail" width="3px"/>
+              <label class="nav-label" text="Accounts"/>
+            </a>
             <a id="nav-settings" class="nav-item" href="/settings">
               <tile class="nav-rail" width="3px"/>
               <label class="nav-label" text="Settings"/>
@@ -40,11 +53,13 @@
             <row align="center" gap="10">
               <tile class="avatar" width="32px" height="32px"/>
               <column gap="1" grow="1">
-                <label class="account-name" text="Not signed in"/>
-                <label class="account-meta" text="Offline mode"/>
+                <label class="account-name" bind-text="account_name" text="Not signed in"/>
+                <label class="account-meta" bind-text="account_kind" text="Offline mode"/>
               </column>
             </row>
-            <button id="sign-in" class="btn btn-quiet btn-block" text="Sign in"/>
+            <a id="nav-account-link" class="btn btn-quiet btn-block" href="/accounts">
+              <label class="nav-label" text="Manage accounts"/>
+            </a>
           </column>
         </column>
 

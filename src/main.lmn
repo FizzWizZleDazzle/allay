@@ -1,0 +1,92 @@
+<root class="app">
+  <use template="shell" active="home">
+    <column class="page" gap="24">
+
+      <column class="page-header" gap="6">
+        <label class="page-title" text="Allay"/>
+        <label class="page-subtitle" wrap="word"
+               text="Install a Minecraft version, make an instance of it, and play."/>
+      </column>
+
+      <row class="hero" gap="20">
+        <column id="last-played" class="card card-feature" grow="1" gap="16">
+
+          <if signal="home_has_instance">
+            <column gap="16" grow="1">
+              <row class="badges" gap="8" align="center">
+                <label class="badge" bind-text="home_last_version" text=""/>
+                <label class="badge" bind-text="home_last_loader" text=""/>
+              </row>
+              <column gap="4">
+                <label class="feature-title" bind-text="home_last_name" text=""/>
+                <label class="feature-meta" bind-text="home_last_meta" text=""/>
+              </column>
+              <spacer/>
+              <row class="cta" gap="10" align="center">
+                <button id="home-play" class="btn btn-primary btn-lg" text="Play"/>
+                <a id="home-edit" class="btn btn-quiet" href="/instances">
+                  <label class="nav-label" text="Manage instances"/>
+                </a>
+              </row>
+            </column>
+          </if>
+
+          <if signal="home_no_instance">
+            <column gap="16" grow="1">
+              <column gap="4">
+                <label class="feature-title" text="Nothing installed yet"/>
+                <label class="feature-meta" wrap="word"
+                       text="Install a version, then make an instance of it to play."/>
+              </column>
+              <spacer/>
+              <row class="cta" gap="10" align="center">
+                <a id="home-browse" class="btn btn-primary btn-lg" href="/versions">
+                  <label class="nav-label" text="Browse versions"/>
+                </a>
+              </row>
+            </column>
+          </if>
+
+        </column>
+
+        <column class="card card-side" width="272px" gap="14">
+          <label class="card-title" text="At a glance"/>
+          <column class="stat-list" gap="0">
+            <row class="stat" align="center">
+              <label class="stat-label" grow="1" text="Instances"/>
+              <label class="stat-value" bind-text="home_instance_count" text="0"/>
+            </row>
+            <row class="stat" align="center">
+              <label class="stat-label" grow="1" text="Installed versions"/>
+              <label class="stat-value" bind-text="home_version_count" text="0"/>
+            </row>
+            <row class="stat" align="center">
+              <label class="stat-label" grow="1" text="Accounts"/>
+              <label class="stat-value" bind-text="home_account_count" text="0"/>
+            </row>
+          </column>
+          <tile class="divider" height="1px"/>
+          <a id="new-instance-link" class="btn btn-outline btn-block" href="/instances">
+            <label class="nav-label" text="New instance"/>
+          </a>
+        </column>
+      </row>
+
+      <column class="card" gap="0">
+        <row class="card-head" align="center" gap="10">
+          <label class="card-title" grow="1" text="Java"/>
+        </row>
+        <tile class="divider" height="1px"/>
+        <column class="card-body" gap="6">
+          <label class="feature-meta" wrap="word" bind-text="java_version"
+                 text="Looking for java..."/>
+          <label class="field-hint" wrap="word"
+                 text="Allay runs the java it finds on PATH. Set the heap size and any extra arguments in Settings."/>
+        </column>
+      </column>
+
+    </column>
+  </use>
+
+  <script src="main.cdl"/>
+</root>
