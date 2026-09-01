@@ -1073,6 +1073,7 @@ checkbox:checked, radio:checked {
 /* The code is read off the screen and typed into a browser, so it is the
    largest thing in the panel and spaced so a letter is not misread. */
 .account-code {
+  width: 220;
   font-family: monospace;
   font-size: var(--font-2xl);
   font-weight: 700;

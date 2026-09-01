@@ -178,7 +178,7 @@ fn versions_recount(kind: string, query: string, generation: string) -> string {
         if kept {
             let id = as_str(m.get("id"));
             if installed.contains("|" + id + "|") {
-                m.insert("install_label", "Installed");
+                m.insert("install_label", "Uninstall");
             } else {
                 m.insert("install_label", "Install");
             }

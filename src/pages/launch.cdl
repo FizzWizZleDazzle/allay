@@ -73,28 +73,45 @@ fn launch_read_version(version: string) {
 // Native jars are unpacked rather than loaded, so they stay off it.
 fn launch_classpath(root, version: string) -> string {
     let cp = "";
-    if root.contains("libraries") {
-        let libs = as_list(root.get("libraries"));
-        for entry in libs {
-            let lib = as_map(entry);
-            if install_library_allowed(lib) == false {
-                continue;
+    let libs = as_list(root.get("libraries"));
+    for entry in libs {
+        let lib = as_map(entry);
+
+        let allowed = true;
+        if lib.contains("rules") {
+            allowed = false;
+            let rules = as_list(lib.get("rules"));
+            for rule in rules {
+                let r = as_map(rule);
+                let matches = true;
+                if r.contains("os") {
+                    let os = as_map(r.get("os"));
+                    if os.contains("name") {
+                        matches = as_str(os.get("name")) == install_os();
+                    }
+                }
+                if matches {
+                    allowed = as_str(r.get("action")) == "allow";
+                }
             }
-            let name = as_str(lib.get("name"));
-            if name.contains(":natives-") {
-                continue;
-            }
-            if lib.contains("downloads") == false {
-                continue;
-            }
-            let downloads = as_map(lib.get("downloads"));
-            if downloads.contains("artifact") == false {
-                continue;
-            }
-            let artifact = as_map(downloads.get("artifact"));
-            let path = libraries_dir() + "/" + as_str(artifact.get("path"));
-            cp = cp + path + ":";
         }
+        if allowed == false {
+            continue;
+        }
+        let name = as_str(lib.get("name"));
+        if name.contains(":natives-") {
+            continue;
+        }
+        if lib.contains("downloads") == false {
+            continue;
+        }
+        let downloads = as_map(lib.get("downloads"));
+        if downloads.contains("artifact") == false {
+            continue;
+        }
+        let artifact = as_map(downloads.get("artifact"));
+        let path = libraries_dir() + "/" + as_str(artifact.get("path"));
+        cp = cp + path + ":";
     }
     return cp + install_client_jar(version);
 }

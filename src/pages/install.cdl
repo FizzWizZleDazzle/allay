@@ -39,6 +39,11 @@ fn install_init() -> bool {
     // Every version row's install button is "<version>:install", so one route
     // covers the whole list.
     lumen::on("click", "install", "install_clicked");
+    lumen::on("click", "uninstall-ok", "install_uninstall_confirm");
+    lumen::on("click", "uninstall-cancel", "install_uninstall_cancel");
+    signal("uninstall_open").set("");
+    signal("uninstall_id").set("");
+    signal("install_failed").set_int(0);
     lumen::on("click", "install-cancel", "install_dismiss");
     lumen::on("http", "allay-version-json", "install_on_version_json");
     lumen::on("http", "allay-asset-index", "install_on_asset_index");
@@ -70,16 +75,81 @@ fn install_natives_dir(version: string) -> string {
     return natives_dir() + "/" + version;
 }
 
+// Written only by a run that downloaded every file it queued. The client jar
+// is the first thing fetched, so its presence says an install started, not
+// that one finished.
+fn install_marker(version: string) -> string {
+    return versions_dir() + "/" + version + "/allay-installed";
+}
+
 fn install_is_installed(version: string) -> bool {
-    return files::exists(install_client_jar(version));
+    return files::exists(install_marker(version));
 }
 
 // --- Starting -----------------------------------------------------------------
 
+// One button per row, and its label says what clicking does. An installed
+// version is removed rather than fetched again.
 fn install_clicked(id: string) -> bool {
     let cut = id.len() - 8;
     let version = id[..cut];
+    if install_is_installed(version) {
+        return install_uninstall_open(version);
+    }
     return install_start(version);
+}
+
+// --- Uninstalling ---------------------------------------------------------------
+
+fn install_uninstall_open(version: string) -> bool {
+    if install_running() {
+        signal("install_status").set("Wait for the running install to finish");
+        return false;
+    }
+    signal("uninstall_id").set(version);
+    signal("uninstall_text").set("Remove " + version + "? Its jar, metadata and native "
+        + "libraries are deleted. Libraries and assets are shared with other versions "
+        + "and are kept.");
+    signal("uninstall_open").set("1");
+    return true;
+}
+
+fn install_uninstall_cancel(id: string) -> bool {
+    signal("uninstall_open").set("");
+    signal("uninstall_id").set("");
+    signal("install_failed").set_int(0);
+    return true;
+}
+
+fn install_uninstall_confirm(id: string) -> bool {
+    let version = signal("uninstall_id").get();
+    signal("uninstall_open").set("");
+    if version == "" {
+        return false;
+    }
+    remove_tree(versions_dir() + "/" + version);
+    remove_tree(install_natives_dir(version));
+    signal("uninstall_id").set("");
+    signal("status").set("Removed " + version);
+    signal("install_status").set("Removed " + version);
+    versions_mark_installed();
+    home_refresh();
+    return true;
+}
+
+// files::remove takes one file, or one directory that is already empty, so a
+// tree comes apart from the leaves up.
+fn remove_tree(path: string) -> bool {
+    if files::exists(path) == false {
+        return false;
+    }
+    if files::is_dir(path) {
+        let names = files::list(path);
+        for name in names {
+            remove_tree(path + "/" + name);
+        }
+    }
+    return files::remove(path);
 }
 
 fn install_dismiss(id: string) -> bool {
@@ -116,7 +186,10 @@ fn install_start(version: string) -> bool {
     signal("install_active").set_int(0);
     signal("install_cursor").set_int(0);
     signal("install_natives").set_int(0);
+    signal("install_failed").set_int(0);
     signal_array("install_queue").clear();
+    signal_array("install_natives_queue").clear();
+    signal("install_natives_at").set_int(0);
 
     files::mkdir(versions_dir() + "/" + version);
     files::mkdir(install_natives_dir(version));
@@ -211,7 +284,75 @@ fn install_build_queue(index_body: string) -> bool {
     let rows = [];
 
     install_add_client(rows, root, version);
-    install_add_libraries(rows, root, version);
+    // The list is read out here and handed over directly: reaching it through
+    // an untyped parameter inside the helper returns an empty list, even
+    // though is_list on the same value answers true (lumen-fx/lumen#307).
+    let natives_dir_for = install_natives_dir(version);
+    let libs = as_list(root.get("libraries"));
+    for entry in libs {
+        let lib = as_map(entry);
+
+        // Rule evaluation, inline: default deny, an allow for this system
+        // turns it on, a later disallow for this system turns it back off.
+        let allowed = true;
+        if lib.contains("rules") {
+            allowed = false;
+            let rules = as_list(lib.get("rules"));
+            for rule in rules {
+                let r = as_map(rule);
+                let matches = true;
+                if r.contains("os") {
+                    let os = as_map(r.get("os"));
+                    if os.contains("name") {
+                        matches = as_str(os.get("name")) == install_os();
+                    }
+                }
+                if matches {
+                    allowed = as_str(r.get("action")) == "allow";
+                }
+            }
+        }
+        if allowed == false {
+            continue;
+        }
+        if lib.contains("downloads") == false {
+            continue;
+        }
+
+        let downloads = as_map(lib.get("downloads"));
+        let name = as_str(lib.get("name"));
+
+        if downloads.contains("artifact") {
+            let artifact = as_map(downloads.get("artifact"));
+            let path = libraries_dir() + "/" + as_str(artifact.get("path"));
+            let url = as_str(artifact.get("url"));
+            let kind = "library";
+            if name.contains(":natives-") {
+                kind = "native";
+                install_note_native(path);
+            }
+            install_queue_add(rows, url, path, kind);
+        }
+
+        // Older versions name the native jar through a classifier instead.
+        if lib.contains("natives") {
+            let nmap = as_map(lib.get("natives"));
+            if nmap.contains(install_os()) {
+                let raw_key = as_str(nmap.get(install_os()));
+                let classifier = raw_key.replace("${arch}", install_arch());
+                if downloads.contains("classifiers") {
+                    let classifiers = as_map(downloads.get("classifiers"));
+                    if classifiers.contains(classifier) {
+                        let native = as_map(classifiers.get(classifier));
+                        let npath = libraries_dir() + "/" + as_str(native.get("path"));
+                        let nurl = as_str(native.get("url"));
+                        install_note_native(npath);
+                        install_queue_add(rows, nurl, npath, "native");
+                    }
+                }
+            }
+        }
+    }
     if index_body != "" {
         install_add_objects(rows, index_body);
     }
@@ -221,10 +362,17 @@ fn install_build_queue(index_body: string) -> bool {
     signal("install_total").set_int(total);
 
     if total == 0 {
-        return install_finish();
+        return install_extract_next();
     }
     signal("install_status").set("Downloading " + str(total) + " files");
     return install_pump();
+}
+
+// An item that is not a map is carried as a one-field `value` record, so the
+// jar paths go in as plain strings and come back out of that field.
+fn install_note_native(path: string) -> bool {
+    lumen::signal_array_push("install_natives_queue", path);
+    return true;
 }
 
 fn install_add_client(rows, root, version: string) -> bool {
@@ -263,91 +411,6 @@ fn install_add_objects(rows, index_body: string) -> bool {
 }
 
 // --- Libraries ----------------------------------------------------------------
-
-// A library carries rules saying which systems it belongs to. The default is
-// to skip: a library is downloaded only when a rule allows it, and a later
-// disallow for this system takes it back out again.
-fn install_library_allowed(lib) -> bool {
-    if lib.contains("rules") == false {
-        return true;
-    }
-    let rules = as_list(lib.get("rules"));
-    let allowed = false;
-    for rule in rules {
-        let r = as_map(rule);
-        let action = as_str(r.get("action"));
-        let matches = true;
-        if r.contains("os") {
-            let os = as_map(r.get("os"));
-            if os.contains("name") {
-                matches = as_str(os.get("name")) == install_os();
-            }
-        }
-        if matches {
-            allowed = action == "allow";
-        }
-    }
-    return allowed;
-}
-
-// Older versions name their native jar through a classifier; newer ones ship
-// it as an ordinary library whose name carries ":natives-". Both end up as a
-// jar that has to be unpacked rather than put on the classpath.
-fn install_native_classifier(lib) -> string {
-    if lib.contains("natives") == false {
-        return "";
-    }
-    let natives = as_map(lib.get("natives"));
-    if natives.contains(install_os()) == false {
-        return "";
-    }
-    let key = as_str(natives.get(install_os()));
-    return key.replace("${arch}", install_arch());
-}
-
-fn install_add_libraries(rows, root, version: string) -> bool {
-    if root.contains("libraries") == false {
-        return false;
-    }
-    let libs = as_list(root.get("libraries"));
-    let natives = install_natives_dir(version);
-    for entry in libs {
-        let lib = as_map(entry);
-        if install_library_allowed(lib) == false {
-            continue;
-        }
-        if lib.contains("downloads") == false {
-            continue;
-        }
-        let downloads = as_map(lib.get("downloads"));
-        let name = as_str(lib.get("name"));
-
-        if downloads.contains("artifact") {
-            let artifact = as_map(downloads.get("artifact"));
-            let path = libraries_dir() + "/" + as_str(artifact.get("path"));
-            let url = as_str(artifact.get("url"));
-            let kind = "library";
-            if name.contains(":natives-") {
-                kind = "native";
-            }
-            install_queue_add(rows, url, path, kind);
-        }
-
-        let classifier = install_native_classifier(lib);
-        if classifier != "" {
-            if downloads.contains("classifiers") {
-                let classifiers = as_map(downloads.get("classifiers"));
-                if classifiers.contains(classifier) {
-                    let native = as_map(classifiers.get(classifier));
-                    let path = libraries_dir() + "/" + as_str(native.get("path"));
-                    let url = as_str(native.get("url"));
-                    install_queue_add(rows, url, path, "native");
-                }
-            }
-        }
-    }
-    return true;
-}
 
 // --- Running the queue --------------------------------------------------------
 
@@ -406,15 +469,6 @@ fn on_download_done(tag: string, path: string) -> bool {
     if tag.starts_with("dl:") == false {
         return false;
     }
-    let index = install_row_index(tag);
-    let row = as_map(signal_array("install_queue").get(index));
-    if as_str(row.get("kind")) == "native" {
-        let version = signal("install_id").get();
-        let pending = signal("install_natives").get_int() + 1;
-        signal("install_natives").set_int(pending);
-        archive::extract(path, install_natives_dir(version), "nat:" + str(index));
-    }
-
     let active = signal("install_active").get_int() - 1;
     signal("install_active").set_int(active);
     install_count_done();
@@ -429,24 +483,26 @@ fn on_download_error(tag: string, message: string) -> bool {
     let active = signal("install_active").get_int() - 1;
     signal("install_active").set_int(active);
     signal("install_error").set(message);
+    let failed = signal("install_failed").get_int() + 1;
+    signal("install_failed").set_int(failed);
     install_count_done();
     install_pump();
     return install_maybe_finish();
 }
 
 fn on_archive_done(tag: string, dest: string, count: int) -> bool {
-    let pending = signal("install_natives").get_int() - 1;
-    signal("install_natives").set_int(pending);
-    return install_maybe_finish();
+    return install_extract_next();
 }
 
 fn on_archive_error(tag: string, message: string) -> bool {
-    let pending = signal("install_natives").get_int() - 1;
-    signal("install_natives").set_int(pending);
     signal("install_error").set(message);
-    return install_maybe_finish();
+    let failed = signal("install_failed").get_int() + 1;
+    signal("install_failed").set_int(failed);
+    return install_extract_next();
 }
 
+// Downloads first, then the native jars one at a time. Four extractions may
+// run at once and a fifth is refused, so they are not started in a burst.
 fn install_maybe_finish() -> bool {
     if install_running() == false {
         return false;
@@ -456,14 +512,71 @@ fn install_maybe_finish() -> bool {
     if done < total {
         return false;
     }
-    if signal("install_natives").get_int() > 0 {
-        return false;
+    return install_extract_next();
+}
+
+fn install_extract_next() -> bool {
+    let at = signal("install_natives_at").get_int();
+    let queued = signal_array("install_natives_queue").len();
+    if at >= queued {
+        install_flatten_natives();
+        return install_finish();
     }
-    return install_finish();
+    let row = as_map(signal_array("install_natives_queue").get(at));
+    let path = as_str(row.get("value"));
+    signal("install_natives_at").set_int(at + 1);
+    signal("install_status").set("Unpacking native libraries "
+        + str(at + 1) + " of " + str(queued));
+    let version = signal("install_id").get();
+    let started = archive::extract(path, install_natives_dir(version), "nat:" + str(at));
+    if started == false {
+        let failed = signal("install_failed").get_int() + 1;
+        signal("install_failed").set_int(failed);
+        return install_extract_next();
+    }
+    return true;
+}
+
+// A native jar keeps its libraries under a platform path such as
+// linux/x64/org/lwjgl/. java.library.path names one directory and does not
+// search below it, so every shared object is copied up to the top.
+fn install_flatten_natives() -> bool {
+    let version = signal("install_id").get();
+    let dir = install_natives_dir(version);
+    return flatten_so(dir, dir);
+}
+
+fn flatten_so(dir: string, root: string) -> bool {
+    let names = files::list(dir);
+    for name in names {
+        let full = dir + "/" + name;
+        if files::is_dir(full) {
+            flatten_so(full, root);
+        } else if name.ends_with(".so") {
+            if dir != root {
+                files::copy(full, root + "/" + name);
+            }
+        }
+    }
+    return true;
 }
 
 fn install_finish() -> bool {
     let version = signal("install_id").get();
+    let failed = signal("install_failed").get_int();
+    if failed > 0 {
+        // No marker: the version stays uninstalled, and running Install again
+        // fetches only what is missing, because the queue skips what is there.
+        signal("install_phase").set("error");
+        signal("install_status").set(str(failed) + " of "
+            + str(signal("install_total").get_int())
+            + " files failed. Install again to retry the ones that are missing.");
+        signal("status").set(version + " did not install fully");
+        versions_mark_installed();
+        home_refresh();
+        return false;
+    }
+    files::write(install_marker(version), version);
     signal("install_phase").set("done");
     signal("install_status").set(version + " is installed");
     signal("status").set(version + " is installed");

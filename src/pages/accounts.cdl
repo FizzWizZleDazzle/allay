@@ -49,8 +49,6 @@ fn accounts_init() -> bool {
     lumen::on("click", "account-cancel", "accounts_cancel_clicked");
     lumen::on("click", "account-copy-code", "accounts_copy_code");
     lumen::on("click", "account-open-browser", "accounts_open_browser");
-    lumen::on("click", "use-account", "accounts_use_clicked");
-    lumen::on("click", "drop-account", "accounts_drop_clicked");
     lumen::on("timer", "account-poll", "accounts_poll_tick");
 
     lumen::on("http", "msa-devicecode", "accounts_on_devicecode");
@@ -118,6 +116,7 @@ fn accounts_refresh() -> bool {
     }
 
     signal_array("accounts").set(rows);
+    accounts_bind_rows(rows);
     signal("accounts_empty").set("");
     if rows.len() == 0 {
         signal("accounts_empty").set("1");
@@ -125,6 +124,18 @@ fn accounts_refresh() -> bool {
     signal("account_name").set(active_name);
     signal("account_kind").set(active_kind);
     home_refresh();
+    return true;
+}
+
+// A row's buttons carry "use-account|<id>" and "drop-account|<id>". Routing
+// matches an id exactly, or an instance suffix after a colon, so each row's
+// ids are registered here after the array signal is written.
+fn accounts_bind_rows(rows) -> bool {
+    for entry in rows {
+        let id = as_str(as_map(entry).get("id"));
+        lumen::on("click", "use-account|" + id, "accounts_use_clicked");
+        lumen::on("click", "drop-account|" + id, "accounts_drop_clicked");
+    }
     return true;
 }
 
@@ -161,6 +172,7 @@ fn accounts_signin_clicked(id: string) -> bool {
     signal("account_flow").set("devicecode");
     signal("account_status").set("Asking Microsoft for a code...");
     signal("account_code").set("");
+    signal("account_retries").set_int(0);
 
     let body = "client_id=" + accounts_client_id()
              + "&scope=" + accounts_scope()
@@ -228,19 +240,21 @@ fn accounts_get(url: string, tag: string, bearer: string) -> bool {
     return true;
 }
 
-// Every step reads its reply the same way, and a step that cannot be read ends
-// the flow rather than leaving the panel spinning.
-fn accounts_body_of(response: any) {
-    let r = as_map(response);
-    let body = as_str(r.get("body"));
-    if body == "" {
-        return lumen::parse_json("{}");
+// Bounded, so a code Microsoft keeps rejecting for some other reason cannot
+// spin here forever.
+fn accounts_renew() -> bool {
+    let tries = signal("account_retries").get_int();
+    if tries >= 3 {
+        return accounts_fail("The code kept expiring. Start the sign-in again when you are ready.");
     }
-    let parsed = lumen::parse_json(body);
-    if is_map(parsed) == false {
-        return lumen::parse_json("{}");
-    }
-    return parsed;
+    signal("account_retries").set_int(tries + 1);
+    signal("account_code").set("");
+    signal("account_status").set("That code expired. Fetching a new one...");
+    let body = "client_id=" + accounts_client_id()
+             + "&scope=" + accounts_scope()
+             + "&response_type=device_code";
+    accounts_post_form("https://login.live.com/oauth20_connect.srf", body, "msa-devicecode");
+    return true;
 }
 
 fn accounts_fail(message: string) -> bool {
@@ -257,7 +271,12 @@ fn accounts_on_devicecode(tag: string, response: any) -> bool {
     if as_bool(r.get("ok")) == false {
         return accounts_fail("Microsoft would not issue a code");
     }
-    let body = as_map(accounts_body_of(response));
+    let raw = as_str(r.get("body"));
+    let parsed = lumen::parse_json(raw);
+    if is_map(parsed) == false {
+        return accounts_fail("Microsoft's reply could not be read");
+    }
+    let body = as_map(parsed);
     if body.contains("device_code") == false {
         return accounts_fail("Microsoft's reply carried no device code");
     }
@@ -291,7 +310,13 @@ fn accounts_poll_tick(name: string) -> bool {
 }
 
 fn accounts_on_token(tag: string, response: any) -> bool {
-    let body = as_map(accounts_body_of(response));
+    let r = as_map(response);
+    let raw = as_str(r.get("body"));
+    let parsed = lumen::parse_json(raw);
+    if is_map(parsed) == false {
+        return accounts_fail("Microsoft's reply could not be read");
+    }
+    let body = as_map(parsed);
 
     // The pending reply is an HTTP error carrying a named reason, so the error
     // name decides whether to keep waiting rather than the status alone.
@@ -311,8 +336,15 @@ fn accounts_on_token(tag: string, response: any) -> bool {
         if err == "authorization_declined" {
             return accounts_fail("Sign-in was declined");
         }
+        // A code lives about fifteen minutes. Walking away for longer than
+        // that is ordinary, so an expired code fetches another one rather than
+        // ending the sign-in and making the user start it over. Microsoft
+        // spells the same condition both ways.
         if err == "expired_token" {
-            return accounts_fail("The code expired before it was entered");
+            return accounts_renew();
+        }
+        if err == "invalid_grant" {
+            return accounts_renew();
         }
         return accounts_fail("Microsoft refused the sign-in: " + err);
     }
@@ -342,13 +374,35 @@ fn accounts_on_xbl(tag: string, response: any) -> bool {
     if as_bool(r.get("ok")) == false {
         return accounts_fail("Xbox Live refused the token");
     }
-    let body = as_map(accounts_body_of(response));
+    let raw = as_str(r.get("body"));
+    let parsed = lumen::parse_json(raw);
+    if is_map(parsed) == false {
+        return accounts_fail("Xbox Live's reply could not be read");
+    }
+    let body = as_map(parsed);
     if body.contains("Token") == false {
         return accounts_fail("Xbox Live returned no token");
     }
     let token = as_str(body.get("Token"));
     signal("account_xbl_token").set(token);
-    signal("account_uhs").set(accounts_user_hash(body));
+
+    // The user hash sits in a nested claim list. It is read here rather than
+    // in a helper: a nested value fetched from a map that arrived through an
+    // untyped parameter comes back as a string (lumen-fx/lumen#307).
+    let uhs = "";
+    if body.contains("DisplayClaims") {
+        let claims = as_map(body.get("DisplayClaims"));
+        if claims.contains("xui") {
+            let xui = as_list(claims.get("xui"));
+            for entry in xui {
+                let e = as_map(entry);
+                if e.contains("uhs") {
+                    uhs = as_str(e.get("uhs"));
+                }
+            }
+        }
+    }
+    signal("account_uhs").set(uhs);
     signal("account_status").set("Authorising for Minecraft...");
 
     let payload = "{\"Properties\":{\"SandboxId\":\"RETAIL\",\"UserTokens\":[\""
@@ -358,67 +412,43 @@ fn accounts_on_xbl(tag: string, response: any) -> bool {
     return true;
 }
 
-// The user hash travels in a nested claim list rather than as a plain field.
-fn accounts_user_hash(body) -> string {
-    if body.contains("DisplayClaims") == false {
-        return "";
-    }
-    let claims = as_map(body.get("DisplayClaims"));
-    if claims.contains("xui") == false {
-        return "";
-    }
-    let xui = as_list(claims.get("xui"));
-    let hash = "";
-    for entry in xui {
-        let e = as_map(entry);
-        if e.contains("uhs") {
-            hash = as_str(e.get("uhs"));
-        }
-    }
-    return hash;
-}
-
 // --- 4. XSTS ----------------------------------------------------------------------
 
 fn accounts_on_xsts(tag: string, response: any) -> bool {
     let r = as_map(response);
-    let body = as_map(accounts_body_of(response));
+    let raw = as_str(r.get("body"));
+    let parsed = lumen::parse_json(raw);
+    if is_map(parsed) == false {
+        return accounts_fail("Xbox Live's authorisation could not be read");
+    }
+    let body = as_map(parsed);
     if as_bool(r.get("ok")) == false {
-        return accounts_fail(accounts_xsts_reason(body));
+        let reason = "Xbox Live refused the authorisation";
+        if body.contains("XErr") {
+            let code = str(as_int(body.get("XErr")));
+            if code == "2148916233" {
+                reason = "This Microsoft account has no Xbox profile. Create one at xbox.com, then sign in again.";
+            } else if code == "2148916235" {
+                reason = "Xbox Live is not available in this account's country.";
+            } else if code == "2148916238" {
+                reason = "This account is a child account and needs to be added to a family.";
+            } else {
+                reason = "Xbox Live refused the authorisation (" + code + ")";
+            }
+        }
+        return accounts_fail(reason);
     }
     if body.contains("Token") == false {
         return accounts_fail("Xbox Live returned no authorisation");
     }
     let xsts = as_str(body.get("Token"));
     let uhs = signal("account_uhs").get();
-    if uhs == "" {
-        uhs = accounts_user_hash(body);
-    }
     signal("account_status").set("Signing in to Minecraft...");
 
     let payload = "{\"identityToken\":\"XBL3.0 x=" + uhs + ";" + xsts + "\"}";
     accounts_post_json("https://api.minecraftservices.com/authentication/login_with_xbox",
                        payload, "mc-login");
     return true;
-}
-
-// XSTS says why it refused with a numeric code, and the common ones are worth
-// spelling out because the fix is different for each.
-fn accounts_xsts_reason(body) -> string {
-    if body.contains("XErr") == false {
-        return "Xbox Live refused the authorisation";
-    }
-    let code = as_str(body.get("XErr"));
-    if code == "2148916233" {
-        return "This Microsoft account has no Xbox profile. Create one at xbox.com, then sign in again.";
-    }
-    if code == "2148916235" {
-        return "Xbox Live is not available in this account's country.";
-    }
-    if code == "2148916238" {
-        return "This account is a child account and needs to be added to a family.";
-    }
-    return "Xbox Live refused the authorisation (" + code + ")";
 }
 
 // --- 5. Minecraft token, then the profile ------------------------------------------
@@ -428,7 +458,12 @@ fn accounts_on_mc_login(tag: string, response: any) -> bool {
     if as_bool(r.get("ok")) == false {
         return accounts_fail("Minecraft services refused the sign-in");
     }
-    let body = as_map(accounts_body_of(response));
+    let raw = as_str(r.get("body"));
+    let parsed = lumen::parse_json(raw);
+    if is_map(parsed) == false {
+        return accounts_fail("The Minecraft sign-in reply could not be read");
+    }
+    let body = as_map(parsed);
     if body.contains("access_token") == false {
         return accounts_fail("Minecraft services returned no token");
     }
@@ -448,7 +483,12 @@ fn accounts_on_profile(tag: string, response: any) -> bool {
     if as_bool(r.get("ok")) == false {
         return accounts_fail("The Minecraft profile could not be read");
     }
-    let body = as_map(accounts_body_of(response));
+    let raw = as_str(r.get("body"));
+    let parsed = lumen::parse_json(raw);
+    if is_map(parsed) == false {
+        return accounts_fail("The Minecraft profile could not be read");
+    }
+    let body = as_map(parsed);
     if body.contains("name") == false {
         return accounts_fail("The Minecraft profile carried no name");
     }

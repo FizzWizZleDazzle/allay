@@ -52,6 +52,17 @@
       </column>
     </if>
 
+    <dialog open="uninstall_open">
+      <column class="instances-dialog" gap="12" width="380px">
+        <label class="card-title" text="Remove version"/>
+        <label class="empty-body" wrap="word" bind-text="uninstall_text" text=""/>
+        <row gap="8" justify="end">
+          <button id="uninstall-cancel" class="btn" text="Cancel"/>
+          <button id="uninstall-ok" class="btn btn-danger" default="true" text="Remove"/>
+        </row>
+      </column>
+    </dialog>
+
     <if signal="versions_failed">
       <column class="versions-failed" gap="8" padding="12" radius="8">
         <label bind-text="versions_failed_text"/>
@@ -62,7 +73,7 @@
     </if>
 
     <column class="versions-list">
-      <for each="versions_view" key="id" virtualized="true" row-height="39">
+      <for each="versions_view" key="id">
         <row class="versions-row" align="center" gap="12" padding="6">
           <label class="versions-row-id" width="240" wrap="ellipsis" text="{row.id}"/>
           <label class="versions-row-type" width="120" text="{row.type}"/>
