@@ -22,12 +22,12 @@ fn versions_init() -> bool {
     // Every row button is id "<version>:use", so one route covers the list.
     lumen::on("click", "use", "versions_use_clicked");
 
-    signal("versions_filter_type").set("Releases");
-    signal("versions_query").set("");
-    signal("versions_chosen").set("");
-    signal("versions_failed").set("");
-    signal("versions_count").set("");
-    signal("versions_generation").set("0");
+    signal<string>("versions_filter_type").set("Releases");
+    signal<string>("versions_query").set("");
+    signal<string>("versions_chosen").set("");
+    signal<string>("versions_failed").set("");
+    signal<string>("versions_count").set("");
+    signal<string>("versions_generation").set("0");
 
     let deps = ["versions_filter_type", "versions_query", "versions_generation"];
     lumen::derive("versions_count", deps, "versions_recount");
@@ -38,7 +38,7 @@ fn versions_init() -> bool {
 }
 
 fn versions_request() -> bool {
-    signal("versions_status").set("Checking for updates...");
+    signal<string>("versions_status").set("Checking for updates...");
     let url = versions_manifest_url();
     let spec = "{\"url\":\"" + url + "\",\"tag\":\"allay-version-manifest\",\"timeout_ms\":15000}";
     let request = lumen::parse_json(spec);
@@ -55,13 +55,13 @@ fn versions_load_cache() -> bool {
         cut = cached.find("\n");
     }
     if cut < 0 {
-        signal("versions_status").set("Loading versions...");
+        signal<string>("versions_status").set("Loading versions...");
     } else {
         let stamp = cached[..cut];
         let body = cached[cut + 1..cached.len()];
-        signal("versions_stamp").set(stamp);
+        signal<string>("versions_stamp").set(stamp);
         versions_apply(body);
-        signal("versions_status").set("Cached, fetched " + stamp);
+        signal<string>("versions_status").set("Cached, fetched " + stamp);
     }
     return true;
 }
@@ -79,10 +79,10 @@ fn versions_on_http(tag: string, response: any) -> bool {
         let cache = stamp + "\n" + body;
         let path = versions_cache_path();
         files::write(path, cache);
-        signal("versions_stamp").set(stamp);
-        signal("versions_failed").set("");
+        signal<string>("versions_stamp").set(stamp);
+        signal<string>("versions_failed").set("");
         versions_apply(body);
-        signal("versions_status").set("Up to date, fetched " + stamp);
+        signal<string>("versions_status").set("Up to date, fetched " + stamp);
     } else {
         versions_report_offline(r);
     }
@@ -97,12 +97,12 @@ fn versions_report_offline(r) -> bool {
     }
     let have = signal_array("versions_all").len();
     if have > 0 {
-        let stamp = signal("versions_stamp").get();
-        signal("versions_status").set("Offline (" + detail + "), showing cache from " + stamp);
+        let stamp = signal<string>("versions_stamp").get();
+        signal<string>("versions_status").set("Offline (" + detail + "), showing cache from " + stamp);
     } else {
-        signal("versions_status").set("No versions loaded");
-        signal("versions_failed").set("1");
-        signal("versions_failed_text").set("Could not reach Mojang (" + detail + ") and no cached manifest is stored yet.");
+        signal<string>("versions_status").set("No versions loaded");
+        signal<string>("versions_failed").set("1");
+        signal<string>("versions_failed_text").set("Could not reach Mojang (" + detail + ") and no cached manifest is stored yet.");
     }
     return true;
 }
@@ -119,8 +119,8 @@ fn versions_apply(body: string) -> bool {
         }
     }
     if done == false {
-        signal("versions_failed").set("1");
-        signal("versions_failed_text").set("The version manifest could not be read.");
+        signal<string>("versions_failed").set("1");
+        signal<string>("versions_failed_text").set("The version manifest could not be read.");
     }
     return done;
 }
@@ -130,11 +130,11 @@ fn versions_read_latest(root) -> bool {
         let latest = as_map(root.get("latest"));
         if latest.contains("release") {
             let release = as_str(latest.get("release"));
-            signal("versions_latest_release").set(release);
+            signal<string>("versions_latest_release").set(release);
         }
         if latest.contains("snapshot") {
             let snapshot = as_str(latest.get("snapshot"));
-            signal("versions_latest_snapshot").set(snapshot);
+            signal<string>("versions_latest_snapshot").set(snapshot);
         }
     }
     return true;
@@ -153,9 +153,9 @@ fn versions_read_list(root) -> bool {
         rows.push(entry);
     }
     signal_array("versions_all").set(rows);
-    let generation = signal("versions_generation").get_int();
+    let generation = signal<int>("versions_generation").get();
     let next = generation + 1;
-    signal("versions_generation").set(str(next));
+    signal<string>("versions_generation").set(str(next));
     return true;
 }
 
@@ -177,6 +177,10 @@ fn versions_recount(kind: string, query: string, generation: string) -> string {
         let kept = versions_matches(m, kind, needle);
         if kept {
             let id = as_str(m.get("id"));
+            // A keyed <for> does not repaint a row whose key it has seen
+            // (lumen-fx/lumen#407), so the key carries the generation and an
+            // install or removal rebuilds the rows.
+            m.insert("key", id + "@" + generation);
             if installed.contains("|" + id + "|") {
                 m.insert("install_label", "Uninstall");
             } else {
@@ -235,9 +239,9 @@ fn versions_installed_ids() -> string {
 // Called when an install finishes: bumping the generation re-runs the derived
 // view, which is what repaints the row's Install button as Installed.
 fn versions_mark_installed() -> bool {
-    let generation = signal("versions_generation").get_int();
+    let generation = signal<int>("versions_generation").get();
     let next = generation + 1;
-    signal("versions_generation").set(str(next));
+    signal<string>("versions_generation").set(str(next));
     return true;
 }
 
@@ -246,11 +250,11 @@ fn versions_refresh_clicked(id: string) -> bool {
     return true;
 }
 
-// Seam: creating the instance belongs to the instances page. All this does is
-// record which version the user picked.
+// Seam: playing belongs to the profiles page. All this does is record which
+// version the user picked, and Play starts from it.
 fn versions_choose(version: string) -> bool {
-    signal("versions_chosen").set(version);
-    signal("versions_chosen_text").set("Selected " + version + " for a new instance.");
+    signal<string>("versions_chosen").set(version);
+    signal<string>("versions_chosen_text").set("Picked " + version + ". Play on any profile runs it.");
     return true;
 }
 
@@ -264,7 +268,7 @@ fn versions_use_clicked(id: string) -> bool {
 }
 
 fn versions_use_latest_release(id: string) -> bool {
-    let version = signal("versions_latest_release").get();
+    let version = signal<string>("versions_latest_release").get();
     if version != "" {
         versions_choose(version);
     }
@@ -272,7 +276,7 @@ fn versions_use_latest_release(id: string) -> bool {
 }
 
 fn versions_use_latest_snapshot(id: string) -> bool {
-    let version = signal("versions_latest_snapshot").get();
+    let version = signal<string>("versions_latest_snapshot").get();
     if version != "" {
         versions_choose(version);
     }
@@ -280,7 +284,7 @@ fn versions_use_latest_snapshot(id: string) -> bool {
 }
 
 fn versions_clear_choice(id: string) -> bool {
-    signal("versions_chosen").set("");
-    signal("versions_chosen_text").set("");
+    signal<string>("versions_chosen").set("");
+    signal<string>("versions_chosen_text").set("");
     return true;
 }

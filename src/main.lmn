@@ -5,13 +5,13 @@
       <column class="page-header" gap="6">
         <label class="page-title" text="Allay"/>
         <label class="page-subtitle" wrap="word"
-               text="Install a Minecraft version, make an instance of it, and play."/>
+               text="Make a profile, add mods if you want them, and play any version."/>
       </column>
 
       <row class="hero" gap="20">
         <column id="last-played" class="card card-feature" grow="1" gap="16">
 
-          <if signal="home_has_instance">
+          <if signal="home_has_profile">
             <column gap="16" grow="1">
               <row class="badges" gap="8" align="center">
                 <label class="badge" bind-text="home_last_version" text=""/>
@@ -24,24 +24,24 @@
               <spacer/>
               <row class="cta" gap="10" align="center">
                 <button id="home-play" class="btn btn-primary btn-lg" text="Play"/>
-                <a id="home-edit" class="btn btn-quiet" href="/instances">
-                  <label class="nav-label" text="Manage instances"/>
+                <a id="home-edit" class="btn btn-quiet" href="/profiles">
+                  <label class="nav-label" text="Manage profiles"/>
                 </a>
               </row>
             </column>
           </if>
 
-          <if signal="home_no_instance">
+          <if signal="home_no_profile">
             <column gap="16" grow="1">
               <column gap="4">
-                <label class="feature-title" text="Nothing installed yet"/>
+                <label class="feature-title" text="No profiles yet"/>
                 <label class="feature-meta" wrap="word"
-                       text="Install a version, then make an instance of it to play."/>
+                       text="Make a profile, then press Play and pick a version."/>
               </column>
               <spacer/>
               <row class="cta" gap="10" align="center">
-                <a id="home-browse" class="btn btn-primary btn-lg" href="/versions">
-                  <label class="nav-label" text="Browse versions"/>
+                <a id="home-browse" class="btn btn-primary btn-lg" href="/profiles">
+                  <label class="nav-label" text="Make a profile"/>
                 </a>
               </row>
             </column>
@@ -53,8 +53,8 @@
           <label class="card-title" text="At a glance"/>
           <column class="stat-list" gap="0">
             <row class="stat" align="center">
-              <label class="stat-label" grow="1" text="Instances"/>
-              <label class="stat-value" bind-text="home_instance_count" text="0"/>
+              <label class="stat-label" grow="1" text="Profiles"/>
+              <label class="stat-value" bind-text="home_profile_count" text="0"/>
             </row>
             <row class="stat" align="center">
               <label class="stat-label" grow="1" text="Installed versions"/>
@@ -66,8 +66,8 @@
             </row>
           </column>
           <tile class="divider" height="1px"/>
-          <a id="new-instance-link" class="btn btn-outline btn-block" href="/instances">
-            <label class="nav-label" text="New instance"/>
+          <a id="new-profile-link" class="btn btn-outline btn-block" href="/profiles">
+            <label class="nav-label" text="New profile"/>
           </a>
         </column>
       </row>

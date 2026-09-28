@@ -2,20 +2,21 @@
 
 A Minecraft launcher built with [Lumen](https://github.com/lumen-fx/lumen).
 
-Allay aims to be easy to pick up and deep when you need it: install a version
-and play in two clicks, or manage loaders, mods, and instances in detail.
-Modpacks are described by what they contain, not by one pinned game version,
-so a pack resolves against the version you play, and mods migrate forward
-when the game updates. Allay changes nothing in the game unless you ask it
-to.
+Allay aims to be easy to pick up and deep when you need it: make a profile and
+play in two clicks, or pick its loader and mods in detail. A profile is a list
+of mods, not a game version: you choose the version when you press Play, and
+every mod is fetched in its build for that version, so the same profile plays
+on an old release and on the newest one. Allay changes nothing in the game
+unless you ask it to.
 
 Early in development. What works today: browsing every version Mojang
-publishes, installing one, making instances of it, signing in to a Microsoft
-account, and playing. Mod loaders and modpacks do not exist yet.
+publishes, profiles with Fabric or Quilt mods from Modrinth, signing in to a
+Microsoft account, and playing.
 
 ## Run from source
 
-Install the Lumen toolchain from [lumenfx.dev](https://lumenfx.dev), then
+Install the Lumen toolchain, 0.0.8 or newer, from
+[lumenfx.dev](https://lumenfx.dev), then
 unpack the runtime modules for your platform from the same release into
 `~/.lumen`; Allay uses the filesystem, download, archive, and process modules
 and will not do anything useful without them.
@@ -33,27 +34,55 @@ the latest release and the latest snapshot at the top, then the full list with
 a type filter and a search box.
 
 Installing one downloads the client jar, the libraries this system's rules
-select, and every object the version's asset index names, then unpacks the
-native libraries. Nothing is verified against a checksum: Mojang publishes
-SHA-1 digests and the download module checks SHA-256 only
-([lumen-fx/lumen#298](https://github.com/lumen-fx/lumen/issues/298)).
+select, and every object the version's asset index names, each checked against
+the SHA-1 Mojang publishes, then unpacks the native libraries. Play installs
+the version it needs on its own, so a visit here is optional; Pick for Play
+sets the version the Play dialog starts from.
 
 The manifest is cached so the list is on screen before the network answers.
 With no connection the page shows the cached list and when it was fetched;
 with no cache either, it offers a retry.
 
-## Instances
+## Profiles
 
-An instance is a name, a game version, and a heap size, with its own game
-directory for saves and options. Play starts the JVM and streams the game's
-output into the instance panel.
+A profile is a name, a mod loader, a heap size, and a list of mods. It is not
+tied to a game version. Press Play, pick a version, and Allay:
 
-The game runs with the launcher's own working directory, because a Lumen
-child process cannot be given one of its own
-([lumen-fx/lumen#299](https://github.com/lumen-fx/lumen/issues/299)). Saves
-and options follow the instance because they are addressed by `--gameDir`;
-the game's log file and crash reports do not. Allay also cannot stop a game
-it started ([lumen-fx/lumen#300](https://github.com/lumen-fx/lumen/issues/300)).
+1. finds each mod's newest build for that version and loader on
+   [Modrinth](https://modrinth.com), along with every mod those builds list
+   as required. When a mod names the exact build of another it needs, that
+   build is used;
+2. shows you what it found before the game starts. A mod with no build for
+   the version is left out, and you are shown which ones. A mod you mark
+   Required stops the launch instead, and so do two mods that say they do not
+   work together;
+3. installs the game version if it is not installed yet, fetches the loader,
+   and downloads the mods, each checked against the SHA-1 Modrinth publishes;
+4. starts the game.
+
+Every version a profile is played on gets its own game directory inside the
+profile, holding its worlds, options, configs, and mods. A world made on one
+version is never opened by another, so playing an older version cannot
+downgrade it.
+
+The loader is Vanilla, Fabric, or Quilt. A new profile is Vanilla; adding a
+mod to it moves it to Fabric, since mods need a loader. Quilt runs Fabric
+mods, so a Quilt profile takes a mod's Quilt build when there is one and its
+Fabric build otherwise. Forge and NeoForge are not supported.
+
+Allay removes only the mod files it put in a mods folder itself. A jar you
+drop in there by hand stays, and loads alongside the profile's mods.
+
+The game runs in its game directory, so its log and crash reports sit beside
+its worlds, and its output streams into the profile panel. Stop the game ends
+it. A game keeps running when Allay closes.
+
+Resolving needs Modrinth: a modded profile does not start while Modrinth
+cannot be reached. The loader falls back to the build already on disk for
+that version when its own servers are down.
+
+Instances from earlier Allay builds become profiles the first time it starts,
+each keeping its worlds in the directory for the version it was made for.
 
 ## Accounts
 
@@ -75,4 +104,5 @@ and on servers that do not check.
 
 Everything Allay downloads and everything you change lives in one per-user
 directory, reported at the bottom of the settings page. Nothing is written
-beside the app.
+beside the app. The game directory setting moves the profiles, with their
+worlds and mods, somewhere else.

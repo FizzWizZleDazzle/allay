@@ -5,11 +5,14 @@ import "lumen.cdl";
 //
 // Metadata goes through lumen::http, because the script has to read it.
 // Everything else is a binary the script never opens, so it goes through
-// download::to_file, which streams straight to disk and reports under a tag.
+// download::to_file, which streams straight to disk, checks the file against
+// the sha1 Mojang publishes, and reports under a tag.
 //
-// The work list lives in the `install_queue` array signal as {url, path, kind}
-// records, walked by a cursor. A version indexes a few thousand asset objects,
-// so the list is written once rather than a few thousand times.
+// The work list lives in the `install_queue` array signal as {url, path, kind,
+// sha1} records, walked by a cursor. A version indexes a few thousand asset
+// objects, so the list is written once rather than a few thousand times. The
+// same queue fetches a mod loader's libraries and a profile's mods (mods.cdl);
+// `queue_owner` says which of the two is waiting for it to drain.
 
 fn install_os() -> string {
     return "linux";
@@ -26,24 +29,25 @@ fn install_objects_base() -> string {
 // --- Setup -------------------------------------------------------------------
 
 fn install_init() -> bool {
-    signal("install_id").set("");
-    signal("install_phase").set("idle");
-    signal("install_status").set("");
-    signal("install_error").set("");
-    signal("install_total").set_int(0);
-    signal("install_done").set_int(0);
-    signal("install_active").set_int(0);
-    signal("install_cursor").set_int(0);
-    signal("install_natives").set_int(0);
+    signal<string>("install_id").set("");
+    signal<string>("install_phase").set("idle");
+    signal<string>("install_status").set("");
+    signal<string>("install_error").set("");
+    signal<int>("install_total").set(0);
+    signal<int>("install_done").set(0);
+    signal<int>("install_active").set(0);
+    signal<int>("install_cursor").set(0);
+    signal<int>("install_natives").set(0);
 
     // Every version row's install button is "<version>:install", so one route
     // covers the whole list.
     lumen::on("click", "install", "install_clicked");
     lumen::on("click", "uninstall-ok", "install_uninstall_confirm");
     lumen::on("click", "uninstall-cancel", "install_uninstall_cancel");
-    signal("uninstall_open").set("");
-    signal("uninstall_id").set("");
-    signal("install_failed").set_int(0);
+    signal<string>("uninstall_open").set("");
+    signal<string>("uninstall_id").set("");
+    signal<int>("install_failed").set(0);
+    signal<string>("queue_owner").set("");
     lumen::on("click", "install-cancel", "install_dismiss");
     lumen::on("http", "allay-version-json", "install_on_version_json");
     lumen::on("http", "allay-asset-index", "install_on_asset_index");
@@ -58,7 +62,7 @@ fn install_lanes() -> int {
 }
 
 fn install_running() -> bool {
-    return signal("install_phase").get() == "running";
+    return signal<string>("install_phase").get() == "running";
 }
 
 // --- Is a version already installed? ------------------------------------------
@@ -103,93 +107,112 @@ fn install_clicked(id: string) -> bool {
 
 fn install_uninstall_open(version: string) -> bool {
     if install_running() {
-        signal("install_status").set("Wait for the running install to finish");
+        signal<string>("install_status").set("Wait for the running install to finish");
         return false;
     }
-    signal("uninstall_id").set(version);
-    signal("uninstall_text").set("Remove " + version + "? Its jar, metadata and native "
+    signal<string>("uninstall_id").set(version);
+    signal<string>("uninstall_text").set("Remove " + version + "? Its jar, metadata and native "
         + "libraries are deleted. Libraries and assets are shared with other versions "
         + "and are kept.");
-    signal("uninstall_open").set("1");
+    signal<string>("uninstall_open").set("1");
     return true;
 }
 
 fn install_uninstall_cancel(id: string) -> bool {
-    signal("uninstall_open").set("");
-    signal("uninstall_id").set("");
-    signal("install_failed").set_int(0);
+    signal<string>("uninstall_open").set("");
+    signal<string>("uninstall_id").set("");
+    signal<int>("install_failed").set(0);
     return true;
 }
 
 fn install_uninstall_confirm(id: string) -> bool {
-    let version = signal("uninstall_id").get();
-    signal("uninstall_open").set("");
+    let version = signal<string>("uninstall_id").get();
+    signal<string>("uninstall_open").set("");
     if version == "" {
         return false;
     }
     remove_tree(versions_dir() + "/" + version);
     remove_tree(install_natives_dir(version));
-    signal("uninstall_id").set("");
-    signal("status").set("Removed " + version);
-    signal("install_status").set("Removed " + version);
+    signal<string>("uninstall_id").set("");
+    signal<string>("status").set("Removed " + version);
+    signal<string>("install_status").set("Removed " + version);
     versions_mark_installed();
     home_refresh();
     return true;
 }
 
 // files::remove takes one file, or one directory that is already empty, so a
-// tree comes apart from the leaves up.
+// tree comes apart from the leaves up. The walk keeps its own list of
+// directories rather than recursing: a loop over a list a call returned is
+// clobbered by the same call made deeper down (lumen-fx/candela#203).
 fn remove_tree(path: string) -> bool {
     if files::exists(path) == false {
         return false;
     }
-    if files::is_dir(path) {
-        let names = files::list(path);
+    if files::is_dir(path) == false {
+        return files::remove(path);
+    }
+    let dirs = [path];
+    let at = 0;
+    while at < dirs.len() {
+        let dir = dirs[at];
+        at = at + 1;
+        let names = files::list(dir);
         for name in names {
-            remove_tree(path + "/" + name);
+            let full = dir + "/" + name;
+            if files::is_dir(full) {
+                dirs.push(full);
+            } else {
+                files::remove(full);
+            }
         }
     }
-    return files::remove(path);
+    let i = dirs.len() - 1;
+    while i >= 0 {
+        files::remove(dirs[i]);
+        i = i - 1;
+    }
+    return files::exists(path) == false;
 }
 
 fn install_dismiss(id: string) -> bool {
-    let phase = signal("install_phase").get();
+    let phase = signal<string>("install_phase").get();
     if phase == "running" {
         // Transfers already handed to the module cannot be recalled, so the
         // panel says so rather than pretending the install stopped.
-        signal("install_status").set("Downloads already started cannot be stopped");
+        signal<string>("install_status").set("Downloads already started cannot be stopped");
         return false;
     }
-    signal("install_phase").set("idle");
+    signal<string>("install_phase").set("idle");
     return true;
 }
 
 fn install_start(version: string) -> bool {
-    if install_running() {
-        signal("install_status").set("Another install is already running");
+    if install_running() || signal<string>("queue_owner").get() != "" {
+        signal<string>("install_status").set("Another install is already running");
         return false;
     }
 
     let url = install_lookup_url(version);
     if url == "" {
-        signal("install_phase").set("error");
-        signal("install_error").set("No metadata URL for " + version);
+        signal<string>("install_phase").set("error");
+        signal<string>("install_error").set("No metadata URL for " + version);
         return false;
     }
 
-    signal("install_id").set(version);
-    signal("install_phase").set("running");
-    signal("install_error").set("");
-    signal("install_status").set("Reading the version metadata...");
-    signal("install_total").set_int(0);
-    signal("install_done").set_int(0);
-    signal("install_active").set_int(0);
-    signal("install_cursor").set_int(0);
-    signal("install_natives").set_int(0);
-    signal("install_failed").set_int(0);
+    signal<string>("install_id").set(version);
+    signal<string>("install_phase").set("running");
+    signal<string>("install_error").set("");
+    signal<string>("install_status").set("Reading the version metadata...");
+    signal<int>("install_total").set(0);
+    signal<int>("install_done").set(0);
+    signal<int>("install_active").set(0);
+    signal<int>("install_cursor").set(0);
+    signal<int>("install_natives").set(0);
+    signal<int>("install_failed").set(0);
     signal_array("install_queue").clear();
     signal_array("install_natives_queue").clear();
-    signal("install_natives_at").set_int(0);
+    signal<int>("install_natives_at").set(0);
 
     files::mkdir(versions_dir() + "/" + version);
     files::mkdir(install_natives_dir(version));
@@ -223,7 +246,7 @@ fn install_on_version_json(tag: string, response: any) -> bool {
         return install_fail("The version metadata could not be fetched");
     }
 
-    let version = signal("install_id").get();
+    let version = signal<string>("install_id").get();
     let body = as_str(r.get("body"));
     files::write(install_version_json(version), body);
 
@@ -240,8 +263,8 @@ fn install_on_version_json(tag: string, response: any) -> bool {
     }
     let index = as_map(root.get("assetIndex"));
     let url = as_str(index.get("url"));
-    signal("install_asset_id").set(as_str(index.get("id")));
-    signal("install_status").set("Reading the asset index...");
+    signal<string>("install_asset_id").set(as_str(index.get("id")));
+    signal<string>("install_status").set("Reading the asset index...");
     let spec = "{\"url\":\"" + url + "\",\"tag\":\"allay-asset-index\",\"timeout_ms\":20000}";
     let request = lumen::parse_json(spec);
     lumen::http(request);
@@ -254,27 +277,28 @@ fn install_on_asset_index(tag: string, response: any) -> bool {
         return install_fail("The asset index could not be fetched");
     }
     let body = as_str(r.get("body"));
-    let asset_id = signal("install_asset_id").get();
+    let asset_id = signal<string>("install_asset_id").get();
     files::write(assets_dir() + "/indexes/" + asset_id + ".json", body);
     return install_build_queue(body);
 }
 
 // --- The work list ------------------------------------------------------------
 
-fn install_queue_add(rows, url: string, path: string, kind: string) -> bool {
+fn install_queue_add(rows, url: string, path: string, kind: string, sha1: string) -> bool {
     if url == "" {
         return false;
     }
     if files::exists(path) {
         return false;
     }
-    let row = {"url": url, "path": path, "kind": kind};
+    let row = {"url": url, "path": path, "kind": kind, "sha1": sha1};
     rows.push(row);
     return true;
 }
 
+
 fn install_build_queue(index_body: string) -> bool {
-    let version = signal("install_id").get();
+    let version = signal<string>("install_id").get();
     let raw = files::read(install_version_json(version));
     let parsed = lumen::parse_json(raw);
     if is_map(parsed) == false {
@@ -331,7 +355,11 @@ fn install_build_queue(index_body: string) -> bool {
                 kind = "native";
                 install_note_native(path);
             }
-            install_queue_add(rows, url, path, kind);
+            let sha1 = "";
+            if artifact.contains("sha1") {
+                sha1 = as_str(artifact.get("sha1"));
+            }
+            install_queue_add(rows, url, path, kind, sha1);
         }
 
         // Older versions name the native jar through a classifier instead.
@@ -347,7 +375,11 @@ fn install_build_queue(index_body: string) -> bool {
                         let npath = libraries_dir() + "/" + as_str(native.get("path"));
                         let nurl = as_str(native.get("url"));
                         install_note_native(npath);
-                        install_queue_add(rows, nurl, npath, "native");
+                        let nsha1 = "";
+                        if native.contains("sha1") {
+                            nsha1 = as_str(native.get("sha1"));
+                        }
+                        install_queue_add(rows, nurl, npath, "native", nsha1);
                     }
                 }
             }
@@ -357,19 +389,39 @@ fn install_build_queue(index_body: string) -> bool {
         install_add_objects(rows, index_body);
     }
 
-    signal_array("install_queue").set(rows);
-    let total = rows.len();
-    signal("install_total").set_int(total);
+    signal<string>("install_status").set("Downloading " + str(rows.len()) + " files");
+    return queue_run(rows, "install");
+}
 
-    if total == 0 {
-        return install_extract_next();
+// Start draining a work list. `owner` is "install" or "prepare", and names who
+// is called once every row has finished, one way or the other.
+fn queue_run(rows, owner: string) -> bool {
+    signal_array("install_queue").set(rows);
+    signal<int>("install_total").set(rows.len());
+    signal<int>("install_done").set(0);
+    signal<int>("install_active").set(0);
+    signal<int>("install_cursor").set(0);
+    signal<int>("install_failed").set(0);
+    signal<string>("install_error").set("");
+    signal<string>("queue_owner").set(owner);
+    if rows.len() == 0 {
+        return queue_finished();
     }
-    signal("install_status").set("Downloading " + str(total) + " files");
     return install_pump();
 }
 
-// An item that is not a map is carried as a one-field `value` record, so the
-// jar paths go in as plain strings and come back out of that field.
+fn queue_finished() -> bool {
+    let owner = signal<string>("queue_owner").get();
+    signal<string>("queue_owner").set("");
+    if owner == "install" {
+        return install_extract_next();
+    }
+    if owner == "prepare" {
+        return mods_after_downloads(signal<int>("install_failed").get());
+    }
+    return false;
+}
+
 fn install_note_native(path: string) -> bool {
     lumen::signal_array_push("install_natives_queue", path);
     return true;
@@ -385,7 +437,11 @@ fn install_add_client(rows, root, version: string) -> bool {
     }
     let client = as_map(downloads.get("client"));
     let url = as_str(client.get("url"));
-    return install_queue_add(rows, url, install_client_jar(version), "client");
+    let sha1 = "";
+    if client.contains("sha1") {
+        sha1 = as_str(client.get("sha1"));
+    }
+    return install_queue_add(rows, url, install_client_jar(version), "client", sha1);
 }
 
 fn install_add_objects(rows, index_body: string) -> bool {
@@ -405,7 +461,7 @@ fn install_add_objects(rows, index_body: string) -> bool {
         let shard = hash[..2];
         let url = base + shard + "/" + hash;
         let path = assets_dir() + "/objects/" + shard + "/" + hash;
-        install_queue_add(rows, url, path, "object");
+        install_queue_add(rows, url, path, "object", hash);
     }
     return true;
 }
@@ -415,14 +471,13 @@ fn install_add_objects(rows, index_body: string) -> bool {
 // --- Running the queue --------------------------------------------------------
 
 // Keep the lanes full: take rows off the cursor until either the list runs out
-// or every lane is busy. Mojang publishes sha1 for every artifact and
-// download::to_file verifies sha256, so nothing is passed as a checksum and
-// nothing is verified.
+// or every lane is busy. A row with a sha1 is checked against it, and a file
+// that does not match fails like any other download.
 fn install_pump() -> bool {
-    let total = signal("install_total").get_int();
+    let total = signal<int>("install_total").get();
     let lanes = install_lanes();
-    let cursor = signal("install_cursor").get_int();
-    let active = signal("install_active").get_int();
+    let cursor = signal<int>("install_cursor").get();
+    let active = signal<int>("install_active").get();
 
     while active < lanes {
         if cursor >= total {
@@ -433,7 +488,11 @@ fn install_pump() -> bool {
         let path = as_str(row.get("path"));
         let tag = "dl:" + str(cursor);
         cursor = cursor + 1;
-        let started = download::to_file(url, path, tag, "");
+        let checksum = "";
+        if row.contains("sha1") && as_str(row.get("sha1")) != "" {
+            checksum = "sha1:" + as_str(row.get("sha1"));
+        }
+        let started = download::to_file(url, path, tag, checksum);
         if started {
             active = active + 1;
         } else {
@@ -441,8 +500,8 @@ fn install_pump() -> bool {
         }
     }
 
-    signal("install_cursor").set_int(cursor);
-    signal("install_active").set_int(active);
+    signal<int>("install_cursor").set(cursor);
+    signal<int>("install_active").set(active);
     return true;
 }
 
@@ -453,15 +512,24 @@ fn install_row_index(tag: string) -> int {
 }
 
 fn install_count_done() -> bool {
-    let done = signal("install_done").get_int() + 1;
-    signal("install_done").set_int(done);
-    let total = signal("install_total").get_int();
-    signal("install_status").set(str(done) + " of " + str(total) + " files");
+    let done = signal<int>("install_done").get() + 1;
+    signal<int>("install_done").set(done);
+    let total = signal<int>("install_total").get();
+    let progress = str(done) + " of " + str(total) + " files";
+    if signal<string>("queue_owner").get() == "prepare" {
+        signal<string>("prep_status").set("Downloading the loader and mods: " + progress);
+    } else {
+        signal<string>("install_status").set(progress);
+        if signal<string>("prep_after_install").get() != "" {
+            signal<string>("prep_status").set("Installing " + signal<string>("install_id").get()
+                + ": " + progress);
+        }
+    }
     let percent = 0;
     if total > 0 {
         percent = done * 100 / total;
     }
-    signal("install_percent").set_int(percent);
+    signal<int>("install_percent").set(percent);
     return true;
 }
 
@@ -469,8 +537,8 @@ fn on_download_done(tag: string, path: string) -> bool {
     if tag.starts_with("dl:") == false {
         return false;
     }
-    let active = signal("install_active").get_int() - 1;
-    signal("install_active").set_int(active);
+    let active = signal<int>("install_active").get() - 1;
+    signal<int>("install_active").set(active);
     install_count_done();
     install_pump();
     return install_maybe_finish();
@@ -480,11 +548,11 @@ fn on_download_error(tag: string, message: string) -> bool {
     if tag.starts_with("dl:") == false {
         return false;
     }
-    let active = signal("install_active").get_int() - 1;
-    signal("install_active").set_int(active);
-    signal("install_error").set(message);
-    let failed = signal("install_failed").get_int() + 1;
-    signal("install_failed").set_int(failed);
+    let active = signal<int>("install_active").get() - 1;
+    signal<int>("install_active").set(active);
+    signal<string>("install_error").set(message);
+    let failed = signal<int>("install_failed").get() + 1;
+    signal<int>("install_failed").set(failed);
     install_count_done();
     install_pump();
     return install_maybe_finish();
@@ -495,43 +563,52 @@ fn on_archive_done(tag: string, dest: string, count: int) -> bool {
 }
 
 fn on_archive_error(tag: string, message: string) -> bool {
-    signal("install_error").set(message);
-    let failed = signal("install_failed").get_int() + 1;
-    signal("install_failed").set_int(failed);
+    signal<string>("install_error").set(message);
+    let failed = signal<int>("install_failed").get() + 1;
+    signal<int>("install_failed").set(failed);
     return install_extract_next();
 }
 
-// Downloads first, then the native jars one at a time. Four extractions may
-// run at once and a fifth is refused, so they are not started in a burst.
+// Downloads first, then, for an install, the native jars one at a time. Four
+// extractions may run at once and a fifth is refused, so they are not started
+// in a burst.
 fn install_maybe_finish() -> bool {
-    if install_running() == false {
+    if signal<string>("queue_owner").get() == "" {
         return false;
     }
-    let done = signal("install_done").get_int();
-    let total = signal("install_total").get_int();
+    let done = signal<int>("install_done").get();
+    let total = signal<int>("install_total").get();
     if done < total {
         return false;
     }
-    return install_extract_next();
+    return queue_finished();
 }
 
 fn install_extract_next() -> bool {
-    let at = signal("install_natives_at").get_int();
+    let at = signal<int>("install_natives_at").get();
     let queued = signal_array("install_natives_queue").len();
     if at >= queued {
         install_flatten_natives();
         return install_finish();
     }
-    let row = as_map(signal_array("install_natives_queue").get(at));
-    let path = as_str(row.get("value"));
-    signal("install_natives_at").set_int(at + 1);
-    signal("install_status").set("Unpacking native libraries "
+    // The paths went in as plain strings. The docs say one comes back as a
+    // one-field `value` record, and it comes back bare (lumen-fx/lumen#410),
+    // so both shapes are read.
+    let item = signal_array("install_natives_queue").get(at);
+    let path = "";
+    if is_map(item) {
+        path = as_str(as_map(item).get("value"));
+    } else {
+        path = as_str(item);
+    }
+    signal<int>("install_natives_at").set(at + 1);
+    signal<string>("install_status").set("Unpacking native libraries "
         + str(at + 1) + " of " + str(queued));
-    let version = signal("install_id").get();
+    let version = signal<string>("install_id").get();
     let started = archive::extract(path, install_natives_dir(version), "nat:" + str(at));
     if started == false {
-        let failed = signal("install_failed").get_int() + 1;
-        signal("install_failed").set_int(failed);
+        let failed = signal<int>("install_failed").get() + 1;
+        signal<int>("install_failed").set(failed);
         return install_extract_next();
     }
     return true;
@@ -541,20 +618,25 @@ fn install_extract_next() -> bool {
 // linux/x64/org/lwjgl/. java.library.path names one directory and does not
 // search below it, so every shared object is copied up to the top.
 fn install_flatten_natives() -> bool {
-    let version = signal("install_id").get();
-    let dir = install_natives_dir(version);
-    return flatten_so(dir, dir);
+    let version = signal<string>("install_id").get();
+    return flatten_so(install_natives_dir(version));
 }
 
-fn flatten_so(dir: string, root: string) -> bool {
-    let names = files::list(dir);
-    for name in names {
-        let full = dir + "/" + name;
-        if files::is_dir(full) {
-            flatten_so(full, root);
-        } else if name.ends_with(".so") {
-            if dir != root {
-                files::copy(full, root + "/" + name);
+fn flatten_so(root: string) -> bool {
+    let dirs = [root];
+    let at = 0;
+    while at < dirs.len() {
+        let dir = dirs[at];
+        at = at + 1;
+        let names = files::list(dir);
+        for name in names {
+            let full = dir + "/" + name;
+            if files::is_dir(full) {
+                dirs.push(full);
+            } else if name.ends_with(".so") {
+                if dir != root {
+                    files::copy(full, root + "/" + name);
+                }
             }
         }
     }
@@ -562,32 +644,43 @@ fn flatten_so(dir: string, root: string) -> bool {
 }
 
 fn install_finish() -> bool {
-    let version = signal("install_id").get();
-    let failed = signal("install_failed").get_int();
+    let version = signal<string>("install_id").get();
+    let failed = signal<int>("install_failed").get();
     if failed > 0 {
         // No marker: the version stays uninstalled, and running Install again
         // fetches only what is missing, because the queue skips what is there.
-        signal("install_phase").set("error");
-        signal("install_status").set(str(failed) + " of "
-            + str(signal("install_total").get_int())
+        signal<string>("install_phase").set("error");
+        signal<string>("install_status").set(str(failed) + " of "
+            + str(signal<int>("install_total").get())
             + " files failed. Install again to retry the ones that are missing.");
-        signal("status").set(version + " did not install fully");
+        signal<string>("status").set(version + " did not install fully");
         versions_mark_installed();
         home_refresh();
+        install_tell_play(false);
         return false;
     }
     files::write(install_marker(version), version);
-    signal("install_phase").set("done");
-    signal("install_status").set(version + " is installed");
-    signal("status").set(version + " is installed");
+    signal<string>("install_phase").set("done");
+    signal<string>("install_status").set(version + " is installed");
+    signal<string>("status").set(version + " is installed");
     versions_mark_installed();
     home_refresh();
+    install_tell_play(true);
     return true;
 }
 
 fn install_fail(message: string) -> bool {
-    signal("install_phase").set("error");
-    signal("install_error").set(message);
-    signal("install_status").set(message);
+    signal<string>("install_phase").set("error");
+    signal<string>("install_error").set(message);
+    signal<string>("install_status").set(message);
+    install_tell_play(false);
     return false;
+}
+
+// An install Play started carries on into the launch once it is over.
+fn install_tell_play(ok: bool) -> bool {
+    if signal<string>("prep_after_install").get() != signal<string>("install_id").get() {
+        return false;
+    }
+    return mods_after_install(ok);
 }

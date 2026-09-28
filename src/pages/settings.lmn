@@ -46,7 +46,7 @@
           <row class="field" gap="20" align="center">
             <column class="field-text" width="260px" gap="3">
               <label class="field-label" text="Game directory"/>
-              <label class="field-hint" wrap="word" text="Where saves and options are kept. Leave empty to use one directory per instance."/>
+              <label class="field-hint" wrap="word" text="Where profiles keep their worlds and mods, one folder per profile and game version. Leave empty to keep them in Allay's data directory."/>
             </column>
             <label id="game-dir" class="path" grow="1" wrap="ellipsis"
                    bind-text="game_dir"/>
@@ -56,7 +56,7 @@
       </column>
 
       <label class="page-footnote" wrap="word" bind-text="data_dir_label"
-             text="Settings, versions, and instances are kept in Allay's data directory."/>
+             text="Settings, versions, and profiles are kept in Allay's data directory."/>
 
     </column>
   </use>

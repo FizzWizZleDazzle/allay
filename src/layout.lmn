@@ -12,7 +12,7 @@
 
       <row class="shell-body" width="100%" grow="1">
 
-        <column class="sidebar" width="236px" height="100%">
+        <column class="sidebar" width="236px" shrink="0" height="100%">
           <row class="brand" align="center" gap="12">
             <image class="brand-mark" src="icons/allay.svg" alt="" width="30px" height="30px"/>
             <column gap="1">
@@ -27,9 +27,9 @@
               <tile class="nav-rail" width="3px"/>
               <label class="nav-label" text="Home"/>
             </a>
-            <a id="nav-instances" class="nav-item" href="/instances">
+            <a id="nav-profiles" class="nav-item" href="/profiles">
               <tile class="nav-rail" width="3px"/>
-              <label class="nav-label" text="Instances"/>
+              <label class="nav-label" text="Profiles"/>
             </a>
 
             <label class="nav-section" text="Setup"/>
@@ -70,6 +70,37 @@
         </column>
 
       </row>
+
+      <!-- Play asks for a game version, then reports on the profile's mods
+           before the game starts. It lives in the shell because the home page
+           plays too. -->
+      <dialog open="play_open">
+        <column class="play-dialog" gap="12">
+          <label class="card-title" bind-text="play_title" text=""/>
+          <if signal="prep_idle">
+            <column gap="8">
+              <label class="field-hint" text="Game version"/>
+              <row gap="8" align="center">
+                <input id="play-version" class="control" grow="1" placeholder="1.21.1"
+                       bind-text="play_version"/>
+                <button id="play-latest" class="btn btn-quiet" text="Latest release"/>
+              </row>
+              <label class="field-hint" wrap="word" width="100%" bind-text="play_hint" text=""/>
+            </column>
+          </if>
+          <label class="play-report" wrap="word" width="100%" bind-text="prep_report" text=""/>
+          <label class="profiles-status" wrap="word" width="100%" bind-text="prep_status" text=""/>
+          <row gap="8" justify="end">
+            <button id="play-cancel" class="btn" text="Close"/>
+            <if signal="prep_confirm">
+              <button id="play-confirm" class="btn btn-primary" text="Play without them"/>
+            </if>
+            <if signal="prep_idle">
+              <button id="play-go" class="btn btn-primary" default="true" text="Play"/>
+            </if>
+          </row>
+        </column>
+      </dialog>
 
       <row class="statusbar" width="100%" align="center" gap="10">
         <tile class="status-dot" width="7px" height="7px"/>

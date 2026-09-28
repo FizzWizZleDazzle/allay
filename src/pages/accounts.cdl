@@ -58,10 +58,10 @@ fn accounts_init() -> bool {
     lumen::on("http", "mc-login", "accounts_on_mc_login");
     lumen::on("http", "mc-profile", "accounts_on_profile");
 
-    signal("account_flow").set("");
-    signal("account_status").set("");
-    signal("account_code").set("");
-    signal("account_url").set("");
+    signal<string>("account_flow").set("");
+    signal<string>("account_status").set("");
+    signal<string>("account_code").set("");
+    signal<string>("account_url").set("");
     accounts_refresh();
     return true;
 }
@@ -117,12 +117,12 @@ fn accounts_refresh() -> bool {
 
     signal_array("accounts").set(rows);
     accounts_bind_rows(rows);
-    signal("accounts_empty").set("");
+    signal<string>("accounts_empty").set("");
     if rows.len() == 0 {
-        signal("accounts_empty").set("1");
+        signal<string>("accounts_empty").set("1");
     }
-    signal("account_name").set(active_name);
-    signal("account_kind").set(active_kind);
+    signal<string>("account_name").set(active_name);
+    signal<string>("account_kind").set(active_kind);
     home_refresh();
     return true;
 }
@@ -166,13 +166,13 @@ fn accounts_active() {
 // --- Starting the flow ---------------------------------------------------------
 
 fn accounts_signin_clicked(id: string) -> bool {
-    if signal("account_flow").get() != "" {
+    if signal<string>("account_flow").get() != "" {
         return false;
     }
-    signal("account_flow").set("devicecode");
-    signal("account_status").set("Asking Microsoft for a code...");
-    signal("account_code").set("");
-    signal("account_retries").set_int(0);
+    signal<string>("account_flow").set("devicecode");
+    signal<string>("account_status").set("Asking Microsoft for a code...");
+    signal<string>("account_code").set("");
+    signal<int>("account_retries").set(0);
 
     let body = "client_id=" + accounts_client_id()
              + "&scope=" + accounts_scope()
@@ -183,20 +183,20 @@ fn accounts_signin_clicked(id: string) -> bool {
 
 fn accounts_cancel_clicked(id: string) -> bool {
     lumen::cancel_timer("account-poll");
-    signal("account_flow").set("");
-    signal("account_status").set("");
-    signal("account_code").set("");
+    signal<string>("account_flow").set("");
+    signal<string>("account_status").set("");
+    signal<string>("account_code").set("");
     return true;
 }
 
 fn accounts_copy_code(id: string) -> bool {
-    lumen::clipboard_write(signal("account_code").get());
-    signal("account_status").set("Code copied. Enter it in the browser.");
+    lumen::clipboard_write(signal<string>("account_code").get());
+    signal<string>("account_status").set("Code copied. Enter it in the browser.");
     return true;
 }
 
 fn accounts_open_browser(id: string) -> bool {
-    lumen::open_url(signal("account_url").get());
+    lumen::open_url(signal<string>("account_url").get());
     return true;
 }
 
@@ -243,13 +243,13 @@ fn accounts_get(url: string, tag: string, bearer: string) -> bool {
 // Bounded, so a code Microsoft keeps rejecting for some other reason cannot
 // spin here forever.
 fn accounts_renew() -> bool {
-    let tries = signal("account_retries").get_int();
+    let tries = signal<int>("account_retries").get();
     if tries >= 3 {
         return accounts_fail("The code kept expiring. Start the sign-in again when you are ready.");
     }
-    signal("account_retries").set_int(tries + 1);
-    signal("account_code").set("");
-    signal("account_status").set("That code expired. Fetching a new one...");
+    signal<int>("account_retries").set(tries + 1);
+    signal<string>("account_code").set("");
+    signal<string>("account_status").set("That code expired. Fetching a new one...");
     let body = "client_id=" + accounts_client_id()
              + "&scope=" + accounts_scope()
              + "&response_type=device_code";
@@ -259,8 +259,8 @@ fn accounts_renew() -> bool {
 
 fn accounts_fail(message: string) -> bool {
     lumen::cancel_timer("account-poll");
-    signal("account_flow").set("");
-    signal("account_status").set(message);
+    signal<string>("account_flow").set("");
+    signal<string>("account_status").set(message);
     return false;
 }
 
@@ -281,17 +281,17 @@ fn accounts_on_devicecode(tag: string, response: any) -> bool {
         return accounts_fail("Microsoft's reply carried no device code");
     }
 
-    signal("account_device_code").set(as_str(body.get("device_code")));
-    signal("account_code").set(as_str(body.get("user_code")));
-    signal("account_url").set(as_str(body.get("verification_uri")));
-    signal("account_flow").set("waiting");
-    signal("account_status").set("Enter the code in your browser, then wait here.");
+    signal<string>("account_device_code").set(as_str(body.get("device_code")));
+    signal<string>("account_code").set(as_str(body.get("user_code")));
+    signal<string>("account_url").set(as_str(body.get("verification_uri")));
+    signal<string>("account_flow").set("waiting");
+    signal<string>("account_status").set("Enter the code in your browser, then wait here.");
 
     let interval = 5;
     if body.contains("interval") {
         interval = as_int(body.get("interval"));
     }
-    signal("account_interval").set_int(interval);
+    signal<int>("account_interval").set(interval);
     lumen::set_timeout("account-poll", interval * 1000);
     return true;
 }
@@ -299,11 +299,11 @@ fn accounts_on_devicecode(tag: string, response: any) -> bool {
 // --- 2. Token, polled ------------------------------------------------------------
 
 fn accounts_poll_tick(name: string) -> bool {
-    if signal("account_flow").get() != "waiting" {
+    if signal<string>("account_flow").get() != "waiting" {
         return false;
     }
     let body = "client_id=" + accounts_client_id()
-             + "&device_code=" + signal("account_device_code").get()
+             + "&device_code=" + signal<string>("account_device_code").get()
              + "&grant_type=urn:ietf:params:oauth:grant-type:device_code";
     accounts_post_form("https://login.live.com/oauth20_token.srf", body, "msa-token");
     return true;
@@ -323,13 +323,13 @@ fn accounts_on_token(tag: string, response: any) -> bool {
     if body.contains("error") {
         let err = as_str(body.get("error"));
         if err == "authorization_pending" {
-            let interval = signal("account_interval").get_int();
+            let interval = signal<int>("account_interval").get();
             lumen::set_timeout("account-poll", interval * 1000);
             return true;
         }
         if err == "slow_down" {
-            let slower = signal("account_interval").get_int() + 5;
-            signal("account_interval").set_int(slower);
+            let slower = signal<int>("account_interval").get() + 5;
+            signal<int>("account_interval").set(slower);
             lumen::set_timeout("account-poll", slower * 1000);
             return true;
         }
@@ -353,15 +353,15 @@ fn accounts_on_token(tag: string, response: any) -> bool {
         return accounts_fail("Microsoft's reply carried no token");
     }
 
-    signal("account_msa_token").set(as_str(body.get("access_token")));
+    signal<string>("account_msa_token").set(as_str(body.get("access_token")));
     if body.contains("refresh_token") {
-        signal("account_refresh_token").set(as_str(body.get("refresh_token")));
+        signal<string>("account_refresh_token").set(as_str(body.get("refresh_token")));
     }
-    signal("account_flow").set("xbox");
-    signal("account_status").set("Signing in to Xbox Live...");
+    signal<string>("account_flow").set("xbox");
+    signal<string>("account_status").set("Signing in to Xbox Live...");
 
     let payload = "{\"Properties\":{\"AuthMethod\":\"RPS\",\"SiteName\":\"user.auth.xboxlive.com\",\"RpsTicket\":\""
-                + signal("account_msa_token").get()
+                + signal<string>("account_msa_token").get()
                 + "\"},\"RelyingParty\":\"http://auth.xboxlive.com\",\"TokenType\":\"JWT\"}";
     accounts_post_json("https://user.auth.xboxlive.com/user/authenticate", payload, "xbl-auth");
     return true;
@@ -384,7 +384,7 @@ fn accounts_on_xbl(tag: string, response: any) -> bool {
         return accounts_fail("Xbox Live returned no token");
     }
     let token = as_str(body.get("Token"));
-    signal("account_xbl_token").set(token);
+    signal<string>("account_xbl_token").set(token);
 
     // The user hash sits in a nested claim list. It is read here rather than
     // in a helper: a nested value fetched from a map that arrived through an
@@ -402,8 +402,8 @@ fn accounts_on_xbl(tag: string, response: any) -> bool {
             }
         }
     }
-    signal("account_uhs").set(uhs);
-    signal("account_status").set("Authorising for Minecraft...");
+    signal<string>("account_uhs").set(uhs);
+    signal<string>("account_status").set("Authorising for Minecraft...");
 
     let payload = "{\"Properties\":{\"SandboxId\":\"RETAIL\",\"UserTokens\":[\""
                 + token
@@ -442,8 +442,8 @@ fn accounts_on_xsts(tag: string, response: any) -> bool {
         return accounts_fail("Xbox Live returned no authorisation");
     }
     let xsts = as_str(body.get("Token"));
-    let uhs = signal("account_uhs").get();
-    signal("account_status").set("Signing in to Minecraft...");
+    let uhs = signal<string>("account_uhs").get();
+    signal<string>("account_status").set("Signing in to Minecraft...");
 
     let payload = "{\"identityToken\":\"XBL3.0 x=" + uhs + ";" + xsts + "\"}";
     accounts_post_json("https://api.minecraftservices.com/authentication/login_with_xbox",
@@ -467,10 +467,10 @@ fn accounts_on_mc_login(tag: string, response: any) -> bool {
     if body.contains("access_token") == false {
         return accounts_fail("Minecraft services returned no token");
     }
-    signal("account_mc_token").set(as_str(body.get("access_token")));
-    signal("account_status").set("Reading the profile...");
+    signal<string>("account_mc_token").set(as_str(body.get("access_token")));
+    signal<string>("account_status").set("Reading the profile...");
     accounts_get("https://api.minecraftservices.com/minecraft/profile",
-                 "mc-profile", signal("account_mc_token").get());
+                 "mc-profile", signal<string>("account_mc_token").get());
     return true;
 }
 
@@ -534,17 +534,17 @@ fn accounts_store(name: string, uuid: string) -> bool {
     map_put(rm, "type", "msa");
     map_put(rm, "name", name);
     map_put(rm, "uuid", uuid);
-    map_put(rm, "access_token", signal("account_mc_token").get());
-    map_put(rm, "refresh_token", signal("account_refresh_token").get());
+    map_put(rm, "access_token", signal<string>("account_mc_token").get());
+    map_put(rm, "refresh_token", signal<string>("account_refresh_token").get());
     list.push(record);
 
     map_put(m, "active", id);
     accounts_persist(d);
     accounts_clear_secrets();
 
-    signal("account_flow").set("");
-    signal("account_status").set("Signed in as " + name);
-    signal("status").set("Signed in as " + name);
+    signal<string>("account_flow").set("");
+    signal<string>("account_status").set("Signed in as " + name);
+    signal<string>("status").set("Signed in as " + name);
     accounts_refresh();
     return true;
 }
@@ -552,13 +552,13 @@ fn accounts_store(name: string, uuid: string) -> bool {
 // The intermediate tokens have done their job by now, and there is no reason
 // to leave them in signals the devtools can read.
 fn accounts_clear_secrets() -> bool {
-    signal("account_device_code").set("");
-    signal("account_msa_token").set("");
-    signal("account_xbl_token").set("");
-    signal("account_uhs").set("");
-    signal("account_mc_token").set("");
-    signal("account_refresh_token").set("");
-    signal("account_code").set("");
+    signal<string>("account_device_code").set("");
+    signal<string>("account_msa_token").set("");
+    signal<string>("account_xbl_token").set("");
+    signal<string>("account_uhs").set("");
+    signal<string>("account_mc_token").set("");
+    signal<string>("account_refresh_token").set("");
+    signal<string>("account_code").set("");
     return true;
 }
 
