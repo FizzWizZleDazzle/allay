@@ -1,7 +1,8 @@
 import "lumen.cdl";
 
 // Installing a version: fetch the metadata that describes it, download every
-// file it names, and unpack the native libraries.
+// file it names, and, for a version older than 1.19, unpack its native
+// libraries.
 //
 // Metadata goes through lumen::http, because the script has to read it.
 // Everything else is a binary the script never opens, so it goes through
@@ -86,8 +87,127 @@ fn install_marker(version: string) -> string {
     return versions_dir() + "/" + version + "/allay-installed";
 }
 
+// Whether this system uses a library. With no rules it does; with rules it
+// does not until an allow for this system, and a later disallow for this
+// system turns it back off.
+fn install_lib_allowed(lib) -> bool {
+    if lib.contains("rules") == false {
+        return true;
+    }
+    let allowed = false;
+    for rule in as_list(lib.get("rules")) {
+        let r = as_map(rule);
+        let matches = true;
+        if r.contains("os") {
+            let os = as_map(r.get("os"));
+            if os.contains("name") {
+                matches = as_str(os.get("name")) == install_os();
+            }
+        }
+        if matches {
+            allowed = as_str(r.get("action")) == "allow";
+        }
+    }
+    return allowed;
+}
+
+// The native jar a library names for this system the way versions before
+// 1.19 do: a `natives` map from system to classifier, and the jar itself
+// under `downloads.classifiers`. Null when the library names none. These jars
+// are unpacked into the version's natives directory; from 1.19 on, native
+// jars are ordinary libraries on the classpath and LWJGL unpacks them itself.
+fn install_legacy_native(lib) {
+    if lib.contains("natives") == false || lib.contains("downloads") == false {
+        return null;
+    }
+    let nmap = as_map(lib.get("natives"));
+    if nmap.contains(install_os()) == false {
+        return null;
+    }
+    let raw_key = as_str(nmap.get(install_os()));
+    let classifier = raw_key.replace("${arch}", install_arch());
+    let downloads = as_map(lib.get("downloads"));
+    if downloads.contains("classifiers") == false {
+        return null;
+    }
+    let classifiers = as_map(downloads.get("classifiers"));
+    if classifiers.contains(classifier) == false {
+        return null;
+    }
+    return as_map(classifiers.get(classifier));
+}
+
+// Every file a launch of this version reads that is not on disk: the
+// metadata, the client jar, each library this system uses, the native jars
+// of an older version and the libraries unpacked from them, and the asset
+// index. The asset objects are left out: there are thousands, and a missing
+// one costs a texture or a sound, not the launch.
+fn install_missing(version: string) -> string[] {
+    let missing = [];
+    let parsed = lumen::parse_json(files::read(install_version_json(version)));
+    if is_map(parsed) == false {
+        missing.push(install_version_json(version));
+        return missing;
+    }
+    let root = as_map(parsed);
+    if files::exists(install_client_jar(version)) == false {
+        missing.push(install_client_jar(version));
+    }
+    let legacy_natives = false;
+    for entry in as_list(root.get("libraries")) {
+        let lib = as_map(entry);
+        if install_lib_allowed(lib) == false || lib.contains("downloads") == false {
+            continue;
+        }
+        let downloads = as_map(lib.get("downloads"));
+        if downloads.contains("artifact") {
+            let artifact = as_map(downloads.get("artifact"));
+            let path = libraries_dir() + "/" + as_str(artifact.get("path"));
+            if files::exists(path) == false {
+                missing.push(path);
+            }
+        }
+        let native = install_legacy_native(lib);
+        if is_null(native) == false {
+            legacy_natives = true;
+            let npath = libraries_dir() + "/" + as_str(as_map(native).get("path"));
+            if files::exists(npath) == false {
+                missing.push(npath);
+            }
+        }
+    }
+    if legacy_natives && files::list(install_natives_dir(version)).len() == 0 {
+        missing.push(install_natives_dir(version));
+    }
+    if root.contains("assetIndex") {
+        let index = as_map(root.get("assetIndex"));
+        let path = assets_dir() + "/indexes/" + as_str(index.get("id")) + ".json";
+        if files::exists(path) == false {
+            missing.push(path);
+        }
+    }
+    return missing;
+}
+
+// "installed" when an install finished and every file a launch reads is
+// still there, "partial" when a version directory exists but either is not
+// true, and "absent" otherwise. Installing a partial version again fetches
+// only what is missing.
+fn install_state(version: string) -> string {
+    if files::exists(versions_dir() + "/" + version) == false {
+        return "absent";
+    }
+    if files::exists(install_marker(version)) == false {
+        return "partial";
+    }
+    if install_missing(version).len() > 0 {
+        return "partial";
+    }
+    return "installed";
+}
+
 fn install_is_installed(version: string) -> bool {
-    return files::exists(install_marker(version));
+    return install_state(version) == "installed";
 }
 
 // --- Starting -----------------------------------------------------------------
@@ -308,81 +428,39 @@ fn install_build_queue(index_body: string) -> bool {
     let rows = [];
 
     install_add_client(rows, root, version);
-    // The list is read out here and handed over directly: reaching it through
-    // an untyped parameter inside the helper returns an empty list, even
-    // though is_list on the same value answers true (lumen-fx/lumen#307).
-    let natives_dir_for = install_natives_dir(version);
-    let libs = as_list(root.get("libraries"));
-    for entry in libs {
+    for entry in as_list(root.get("libraries")) {
         let lib = as_map(entry);
-
-        // Rule evaluation, inline: default deny, an allow for this system
-        // turns it on, a later disallow for this system turns it back off.
-        let allowed = true;
-        if lib.contains("rules") {
-            allowed = false;
-            let rules = as_list(lib.get("rules"));
-            for rule in rules {
-                let r = as_map(rule);
-                let matches = true;
-                if r.contains("os") {
-                    let os = as_map(r.get("os"));
-                    if os.contains("name") {
-                        matches = as_str(os.get("name")) == install_os();
-                    }
-                }
-                if matches {
-                    allowed = as_str(r.get("action")) == "allow";
-                }
-            }
-        }
-        if allowed == false {
+        if install_lib_allowed(lib) == false || lib.contains("downloads") == false {
             continue;
         }
-        if lib.contains("downloads") == false {
-            continue;
-        }
-
         let downloads = as_map(lib.get("downloads"));
-        let name = as_str(lib.get("name"));
 
+        // Native jars from 1.19 on are among these: they go on the classpath
+        // like any other library.
         if downloads.contains("artifact") {
             let artifact = as_map(downloads.get("artifact"));
             let path = libraries_dir() + "/" + as_str(artifact.get("path"));
-            let url = as_str(artifact.get("url"));
-            let kind = "library";
-            if name.contains(":natives-") {
-                kind = "native";
-                install_note_native(path);
-            }
             let sha1 = "";
             if artifact.contains("sha1") {
                 sha1 = as_str(artifact.get("sha1"));
             }
-            install_queue_add(rows, url, path, kind, sha1);
+            install_queue_add(rows, as_str(artifact.get("url")), path, "library", sha1);
         }
 
-        // Older versions name the native jar through a classifier instead.
-        if lib.contains("natives") {
-            let nmap = as_map(lib.get("natives"));
-            if nmap.contains(install_os()) {
-                let raw_key = as_str(nmap.get(install_os()));
-                let classifier = raw_key.replace("${arch}", install_arch());
-                if downloads.contains("classifiers") {
-                    let classifiers = as_map(downloads.get("classifiers"));
-                    if classifiers.contains(classifier) {
-                        let native = as_map(classifiers.get(classifier));
-                        let npath = libraries_dir() + "/" + as_str(native.get("path"));
-                        let nurl = as_str(native.get("url"));
-                        install_note_native(npath);
-                        let nsha1 = "";
-                        if native.contains("sha1") {
-                            nsha1 = as_str(native.get("sha1"));
-                        }
-                        install_queue_add(rows, nurl, npath, "native", nsha1);
-                    }
-                }
+        // Older versions name a native jar through a classifier, and it is
+        // unpacked once the downloads are done. It is queued for unpacking
+        // even when it is already on disk, so an install that died between
+        // the download and the unpacking finishes the job.
+        let native = install_legacy_native(lib);
+        if is_null(native) == false {
+            let n = as_map(native);
+            let npath = libraries_dir() + "/" + as_str(n.get("path"));
+            signal_array("install_natives_queue").push(npath);
+            let nsha1 = "";
+            if n.contains("sha1") {
+                nsha1 = as_str(n.get("sha1"));
             }
+            install_queue_add(rows, as_str(n.get("url")), npath, "native", nsha1);
         }
     }
     if index_body != "" {
@@ -420,11 +498,6 @@ fn queue_finished() -> bool {
         return mods_after_downloads(signal<int>("install_failed").get());
     }
     return false;
-}
-
-fn install_note_native(path: string) -> bool {
-    lumen::signal_array_push("install_natives_queue", path);
-    return true;
 }
 
 fn install_add_client(rows, root, version: string) -> bool {
@@ -569,9 +642,9 @@ fn on_archive_error(tag: string, message: string) -> bool {
     return install_extract_next();
 }
 
-// Downloads first, then, for an install, the native jars one at a time. Four
-// extractions may run at once and a fifth is refused, so they are not started
-// in a burst.
+// Downloads first, then, for an install of an older version, its native jars
+// one at a time. Four extractions may run at once and a fifth is refused, so
+// they are not started in a burst.
 fn install_maybe_finish() -> bool {
     if signal<string>("queue_owner").get() == "" {
         return false;
@@ -653,6 +726,21 @@ fn install_finish() -> bool {
         signal<string>("install_status").set(str(failed) + " of "
             + str(signal<int>("install_total").get())
             + " files failed. Install again to retry the ones that are missing.");
+        signal<string>("status").set(version + " did not install fully");
+        versions_mark_installed();
+        home_refresh();
+        install_tell_play(false);
+        return false;
+    }
+    // Every download succeeding still leaves out a file the metadata names
+    // without a URL, or native jars that unpacked to nothing. The marker goes
+    // down only when the launch has every file it reads.
+    let missing = install_missing(version);
+    if missing.len() > 0 {
+        signal<string>("install_phase").set("error");
+        signal<string>("install_error").set("Missing: " + missing[0]);
+        signal<string>("install_status").set(str(missing.len())
+            + " files the game needs are still missing after the install.");
         signal<string>("status").set(version + " did not install fully");
         versions_mark_installed();
         home_refresh();

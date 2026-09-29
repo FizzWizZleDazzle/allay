@@ -169,7 +169,7 @@ fn versions_recount(kind: string, query: string, generation: string) -> string {
     }
     let trimmed = query.trim();
     let needle = trimmed.lowercase();
-    let installed = versions_installed_ids();
+    let states = versions_install_states();
     let all = as_list(signal_array("versions_all").all());
     let view = [];
     for entry in all {
@@ -181,8 +181,14 @@ fn versions_recount(kind: string, query: string, generation: string) -> string {
             // (lumen-fx/lumen#407), so the key carries the generation and an
             // install or removal rebuilds the rows.
             m.insert("key", id + "@" + generation);
-            if installed.contains("|" + id + "|") {
+            let state = "absent";
+            if states.contains(id) {
+                state = as_str(states.get(id));
+            }
+            if state == "installed" {
                 m.insert("install_label", "Uninstall");
+            } else if state == "partial" {
+                m.insert("install_label", "Finish install");
             } else {
                 m.insert("install_label", "Install");
             }
@@ -224,16 +230,15 @@ fn versions_matches(m, kind: string, needle: string) -> bool {
     return keep;
 }
 
-// One directory listing, joined into a string the row loop can search. Asking
-// the filesystem once per visible row would mean hundreds of calls on every
-// keystroke in the search box.
-fn versions_installed_ids() -> string {
-    let names = files::list(versions_dir());
-    let joined = "|";
-    for name in names {
-        joined = joined + name + "|";
+// The install state of every version with a directory on disk, keyed by
+// version id. Only those directories are asked about; asking once per visible
+// row would mean hundreds of calls on every keystroke in the search box.
+fn versions_install_states() {
+    let states = new_map();
+    for name in files::list(versions_dir()) {
+        states.insert(name, install_state(name));
     }
-    return joined;
+    return states;
 }
 
 // Called when an install finishes: bumping the generation re-runs the derived

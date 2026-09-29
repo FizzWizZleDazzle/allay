@@ -160,8 +160,13 @@ fn home_refresh() -> bool {
     let list = profiles_of(d);
     signal<string>("home_profile_count").set(str(list.len()));
 
-    let versions = files::list(versions_dir());
-    signal<string>("home_version_count").set(str(versions.len()));
+    let installed = 0;
+    for name in files::list(versions_dir()) {
+        if install_is_installed(name) {
+            installed = installed + 1;
+        }
+    }
+    signal<string>("home_version_count").set(str(installed));
 
     let accounts = accounts_list_of(accounts_read_doc());
     signal<string>("home_account_count").set(str(accounts.len()));

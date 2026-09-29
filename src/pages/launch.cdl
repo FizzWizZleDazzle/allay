@@ -105,43 +105,20 @@ fn launch_loader_classpath(loader, taken) -> string {
     return cp;
 }
 
-// The classpath is every library this system is allowed plus the client jar.
-// Native jars are unpacked rather than loaded, so they stay off it.
+// The classpath is every library this system uses plus the client jar. From
+// 1.19 on that includes the native jars: LWJGL unpacks its own shared
+// libraries from them into the directory the jvm arguments name. Older
+// versions list their native jars through classifiers only, with no artifact
+// to put here; install.cdl unpacks those instead.
 fn launch_classpath(root, version: string, taken) -> string {
     let cp = "";
-    let libs = as_list(root.get("libraries"));
-    for entry in libs {
+    for entry in as_list(root.get("libraries")) {
         let lib = as_map(entry);
-
-        let allowed = true;
-        if lib.contains("rules") {
-            allowed = false;
-            let rules = as_list(lib.get("rules"));
-            for rule in rules {
-                let r = as_map(rule);
-                let matches = true;
-                if r.contains("os") {
-                    let os = as_map(r.get("os"));
-                    if os.contains("name") {
-                        matches = as_str(os.get("name")) == install_os();
-                    }
-                }
-                if matches {
-                    allowed = as_str(r.get("action")) == "allow";
-                }
-            }
-        }
-        if allowed == false {
+        if install_lib_allowed(lib) == false || lib.contains("downloads") == false {
             continue;
         }
         let name = as_str(lib.get("name"));
-        if name.contains(":natives-") {
-            continue;
-        }
         if taken.contains(launch_lib_key(name)) {
-            continue;
-        }
-        if lib.contains("downloads") == false {
             continue;
         }
         let downloads = as_map(lib.get("downloads"));
@@ -149,8 +126,7 @@ fn launch_classpath(root, version: string, taken) -> string {
             continue;
         }
         let artifact = as_map(downloads.get("artifact"));
-        let path = libraries_dir() + "/" + as_str(artifact.get("path"));
-        cp = cp + path + ":";
+        cp = cp + libraries_dir() + "/" + as_str(artifact.get("path")) + ":";
     }
     return cp + install_client_jar(version);
 }
@@ -208,7 +184,12 @@ fn launch_start(profile_id: string, version: string, loader_id: string, memory_m
         signal<string>("status").set("A game is already running");
         return false;
     }
-    if install_is_installed(version) == false {
+    let state = install_state(version);
+    if state == "partial" {
+        signal<string>("status").set(version + " is missing files. Install it again to fetch them");
+        return false;
+    }
+    if state != "installed" {
         signal<string>("status").set(version + " is not installed yet");
         return false;
     }
