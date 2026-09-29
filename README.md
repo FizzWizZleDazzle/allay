@@ -16,10 +16,10 @@ Microsoft account, and playing.
 ## Run from source
 
 Install the Lumen toolchain, 0.0.8 or newer, from
-[lumenfx.dev](https://lumenfx.dev), then
-unpack the runtime modules for your platform from the same release into
-`~/.lumen`; Allay uses the filesystem, download, archive, and process modules
-and will not do anything useful without them.
+[lumenfx.dev](https://lumenfx.dev). The installer also puts the runtime
+modules in place, and Allay needs four of them: filesystem, download,
+archive, and process. A toolchain installed with `--no-modules` runs Allay
+without them, and it can then neither install nor start a game.
 
 ```sh
 lumenc run .
@@ -35,9 +35,15 @@ a type filter and a search box.
 
 Installing one downloads the client jar, the libraries this system's rules
 select, and every object the version's asset index names, each checked against
-the SHA-1 Mojang publishes, then unpacks the native libraries. Play installs
-the version it needs on its own, so a visit here is optional; Pick for Play
-sets the version the Play dialog starts from.
+the SHA-1 Mojang publishes. A version older than 1.19 also has its native
+libraries unpacked; newer ones load them from their jars. Play installs the
+version it needs on its own, so a visit here is optional; Pick for Play sets
+the version the Play dialog starts from.
+
+A version counts as installed only while every file its launch reads is on
+disk. One whose install stopped part way, or whose files have gone missing
+since, shows Finish install, which fetches only what is missing; Play does the
+same before it starts the game.
 
 The manifest is cached so the list is on screen before the network answers.
 With no connection the page shows the cached list and when it was fetched;

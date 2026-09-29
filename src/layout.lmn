@@ -53,8 +53,8 @@
             <row align="center" gap="10">
               <tile class="avatar" width="32px" height="32px"/>
               <column gap="1" grow="1">
-                <label class="account-name" bind-text="account_name" text="Not signed in"/>
-                <label class="account-meta" bind-text="account_kind" text="Offline mode"/>
+                <label class="account-name" bind-text="$account_name" text="Not signed in"/>
+                <label class="account-meta" bind-text="$account_kind" text="Offline mode"/>
               </column>
             </row>
             <a id="nav-account-link" class="btn btn-quiet btn-block" href="/accounts">
@@ -74,22 +74,25 @@
       <!-- Play asks for a game version, then reports on the profile's mods
            before the game starts. It lives in the shell because the home page
            plays too. -->
+      <!-- <if> and <dialog> name their signal without the leading $ the bind-*
+           attributes carry: there the $ stays part of the name, and the gate
+           never opens (lumen-fx/lumen#414). -->
       <dialog open="play_open">
         <column class="play-dialog" gap="12">
-          <label class="card-title" bind-text="play_title" text=""/>
+          <label class="card-title" bind-text="$play_title" text=""/>
           <if signal="prep_idle">
             <column gap="8">
               <label class="field-hint" text="Game version"/>
               <row gap="8" align="center">
                 <input id="play-version" class="control" grow="1" placeholder="1.21.1"
-                       bind-text="play_version"/>
+                       bind-text="$play_version"/>
                 <button id="play-latest" class="btn btn-quiet" text="Latest release"/>
               </row>
-              <label class="field-hint" wrap="word" width="100%" bind-text="play_hint" text=""/>
+              <label class="field-hint" wrap="word" width="100%" bind-text="$play_hint" text=""/>
             </column>
           </if>
-          <label class="play-report" wrap="word" width="100%" bind-text="prep_report" text=""/>
-          <label class="profiles-status" wrap="word" width="100%" bind-text="prep_status" text=""/>
+          <label class="play-report" wrap="word" width="100%" bind-text="$prep_report" text=""/>
+          <label class="profiles-status" wrap="word" width="100%" bind-text="$prep_status" text=""/>
           <row gap="8" justify="end">
             <button id="play-cancel" class="btn" text="Close"/>
             <if signal="prep_confirm">
@@ -104,7 +107,7 @@
 
       <row class="statusbar" width="100%" align="center" gap="10">
         <tile class="status-dot" width="7px" height="7px"/>
-        <label class="status-text" bind-text="status" text="Ready"/>
+        <label class="status-text" bind-text="$status" text="Ready"/>
         <spacer/>
         <label class="status-meta" text="allay 0.1.0-dev"/>
       </row>

@@ -31,14 +31,6 @@ fn mods_api() -> string {
     return "https://api.modrinth.com/v2";
 }
 
-fn new_map() {
-    return as_map(lumen::parse_json("{}"));
-}
-
-fn new_list() {
-    return as_list(lumen::parse_json("[]"));
-}
-
 // Enough of percent-encoding for a query string: the characters that would
 // otherwise end or split a parameter. The HTTP client encodes the rest.
 fn url_encode(s: string) -> string {
@@ -63,14 +55,10 @@ fn json_strings(items) -> string {
     return out + "]";
 }
 
+// Modrinth asks every client to name itself in the User-Agent.
 fn mods_get(url: string, tag: string) -> bool {
-    let request = new_map();
-    map_put(request, "url", url);
-    map_put(request, "tag", tag);
-    map_put(request, "timeout_ms", 20000);
-    let headers = new_map();
-    map_put(headers, "User-Agent", mods_user_agent());
-    map_put(request, "headers", headers);
+    let agent = mods_user_agent();
+    let request = {"url": url, "tag": tag, "timeout_ms": "20000", "header:User-Agent": agent};
     lumen::http(request);
     return true;
 }
@@ -268,32 +256,32 @@ fn mods_prepare_start(pid: string, version: string) -> bool {
     let loader = as_str(profile.get("loader"));
 
     let doc = new_map();
-    map_put(doc, "profile", pid);
-    map_put(doc, "version", version);
-    map_put(doc, "loader", loader);
-    map_put(doc, "memory", as_int(profile.get("memory_mb")));
-    map_put(doc, "seq", 0);
-    map_put(doc, "pending", 0);
-    map_put(doc, "error", "");
-    map_put(doc, "wants", new_map());
-    map_put(doc, "asked", new_map());
-    map_put(doc, "pins", new_map());
-    map_put(doc, "resolved", new_map());
-    map_put(doc, "missing", new_map());
-    map_put(doc, "incompatible", new_list());
-    map_put(doc, "titles", new_map());
-    map_put(doc, "final", new_list());
-    map_put(doc, "loader_id", "");
+    doc.insert("profile", pid);
+    doc.insert("version", version);
+    doc.insert("loader", loader);
+    doc.insert("memory", as_int(profile.get("memory_mb")));
+    doc.insert("seq", 0);
+    doc.insert("pending", 0);
+    doc.insert("error", "");
+    doc.insert("wants", new_map());
+    doc.insert("asked", new_map());
+    doc.insert("pins", new_map());
+    doc.insert("resolved", new_map());
+    doc.insert("missing", new_map());
+    doc.insert("incompatible", new_list());
+    doc.insert("titles", new_map());
+    doc.insert("final", new_list());
+    doc.insert("loader_id", "");
 
     let top = new_map();
     let mods = profiles_mods_of(profile);
     for entry in mods {
         let e = as_map(entry);
         let project = as_str(e.get("id"));
-        map_put(top, project, mod_required(e));
-        map_put(mods_sub(doc, "titles"), project, as_str(e.get("title")));
+        top.insert(project, mod_required(e));
+        mods_sub(doc, "titles").insert(project, as_str(e.get("title")));
     }
-    map_put(doc, "top", top);
+    doc.insert("top", top);
     signal<string>("prep_report").set("");
 
     if loader == "vanilla" || mods.len() == 0 {
@@ -317,14 +305,14 @@ fn mods_prepare_start(pid: string, version: string) -> bool {
 // which keys the request's record in `wants`.
 fn mods_want(doc, project: string, pinned: string, by: string) -> bool {
     let seq = as_int(doc.get("seq")) + 1;
-    map_put(doc, "seq", seq);
-    map_put(doc, "pending", as_int(doc.get("pending")) + 1);
+    doc.insert("seq", seq);
+    doc.insert("pending", as_int(doc.get("pending")) + 1);
     let want = new_map();
-    map_put(want, "project", project);
-    map_put(want, "pinned", pinned);
-    map_put(want, "by", by);
-    map_put(mods_sub(doc, "wants"), str(seq), want);
-    map_put(mods_sub(doc, "asked"), project, true);
+    want.insert("project", project);
+    want.insert("pinned", pinned);
+    want.insert("by", by);
+    mods_sub(doc, "wants").insert(str(seq), want);
+    mods_sub(doc, "asked").insert(project, true);
 
     // Each request gets a tag of its own, so each gets its own route.
     let tag = str(seq) + ":allay-mr-ver";
@@ -401,9 +389,9 @@ fn mods_on_versions(tag: string, response: any) -> bool {
     let r = as_map(response);
     if as_bool(r.get("ok")) == false {
         if as_int(r.get("status")) == 404 {
-            map_put(mods_sub(doc, "missing"), project, "is no longer on Modrinth");
+            mods_sub(doc, "missing").insert(project, "is no longer on Modrinth");
         } else {
-            map_put(doc, "error", "Modrinth could not be reached. " + as_str(r.get("error")));
+            doc.insert("error", "Modrinth could not be reached. " + as_str(r.get("error")));
         }
         return mods_settle(doc);
     }
@@ -413,7 +401,7 @@ fn mods_on_versions(tag: string, response: any) -> bool {
         picked = mods_pick(as_list(parsed), doc);
     }
     if is_null(picked) {
-        map_put(mods_sub(doc, "missing"), project, "has no build for "
+        mods_sub(doc, "missing").insert(project, "has no build for "
             + as_str(doc.get("version")));
         return mods_settle(doc);
     }
@@ -432,12 +420,12 @@ fn mods_on_pinned(tag: string, response: any) -> bool {
     let project = as_str(want.get("project"));
     let r = as_map(response);
     if as_bool(r.get("ok")) == false {
-        map_put(doc, "error", "Modrinth could not be reached. " + as_str(r.get("error")));
+        doc.insert("error", "Modrinth could not be reached. " + as_str(r.get("error")));
         return mods_settle(doc);
     }
     let parsed = lumen::parse_json(as_str(r.get("body")));
     if is_map(parsed) == false {
-        map_put(doc, "error", "Modrinth sent something Allay could not read.");
+        doc.insert("error", "Modrinth sent something Allay could not read.");
         return mods_settle(doc);
     }
     let v = as_map(parsed);
@@ -447,7 +435,7 @@ fn mods_on_pinned(tag: string, response: any) -> bool {
     let versions = as_list(v.get("game_versions"));
     if mods_list_has(versions, as_str(doc.get("version"))) == false
         || mods_build_fits(v, doc) == false {
-        map_put(mods_sub(doc, "missing"), project, "has no build for "
+        mods_sub(doc, "missing").insert(project, "has no build for "
             + as_str(doc.get("version")));
         return mods_settle(doc);
     }
@@ -468,7 +456,7 @@ fn mods_accept(doc, project: string, v, pinned: bool) -> bool {
     }
     let files = as_list(v.get("files"));
     if files.len() == 0 {
-        map_put(mods_sub(doc, "missing"), project, "has a build with no file in it");
+        mods_sub(doc, "missing").insert(project, "has a build with no file in it");
         return false;
     }
     let file = as_map(files[0]);
@@ -481,12 +469,12 @@ fn mods_accept(doc, project: string, v, pinned: bool) -> bool {
     let hashes = as_map(file.get("hashes"));
 
     let entry = new_map();
-    map_put(entry, "version_id", as_str(v.get("id")));
-    map_put(entry, "version_number", as_str(v.get("version_number")));
-    map_put(entry, "file", as_str(file.get("filename")));
-    map_put(entry, "url", as_str(file.get("url")));
-    map_put(entry, "sha1", as_str(hashes.get("sha1")));
-    map_put(entry, "pinned", pinned);
+    entry.insert("version_id", as_str(v.get("id")));
+    entry.insert("version_number", as_str(v.get("version_number")));
+    entry.insert("file", as_str(file.get("filename")));
+    entry.insert("url", as_str(file.get("url")));
+    entry.insert("sha1", as_str(hashes.get("sha1")));
+    entry.insert("pinned", pinned);
     let deps = new_list();
 
     let dependencies = as_list(v.get("dependencies"));
@@ -507,7 +495,7 @@ fn mods_accept(doc, project: string, v, pinned: bool) -> bool {
             pair.push(project);
             let incompatible = as_list(doc.get("incompatible"));
             incompatible.push(pair);
-            map_put(doc, "incompatible", incompatible);
+            doc.insert("incompatible", incompatible);
         }
         if kind != "required" {
             continue;
@@ -525,21 +513,21 @@ fn mods_accept(doc, project: string, v, pinned: bool) -> bool {
         let pins = mods_sub(doc, "pins");
         if dep_version != "" {
             if pins.contains(dep_version) == false {
-                map_put(pins, dep_version, true);
+                pins.insert(dep_version, true);
                 mods_want(doc, dep_project, dep_version, project);
             }
         } else if asked.contains(dep_project) == false {
             mods_want(doc, dep_project, "", project);
         }
     }
-    map_put(entry, "deps", deps);
-    map_put(resolved, project, entry);
+    entry.insert("deps", deps);
+    resolved.insert(project, entry);
     return true;
 }
 
 // One reply is in. When it was the last one, work out what can run.
 fn mods_settle(doc) -> bool {
-    map_put(doc, "pending", as_int(doc.get("pending")) - 1);
+    doc.insert("pending", as_int(doc.get("pending")) - 1);
     mods_write_doc(doc);
     if as_int(doc.get("pending")) > 0 {
         return true;
@@ -586,7 +574,7 @@ fn mods_on_titles(tag: string, response: any) -> bool {
             let titles = mods_sub(doc, "titles");
             for item in as_list(parsed) {
                 let p = as_map(item);
-                map_put(titles, as_str(p.get("id")), as_str(p.get("title")));
+                titles.insert(as_str(p.get("id")), as_str(p.get("title")));
             }
             mods_write_doc(doc);
         }
@@ -638,7 +626,7 @@ fn mods_decide() -> bool {
                 let dp = as_str(dep);
                 let gone = missing.contains(dp) && resolved.contains(dp) == false;
                 if gone || broken.contains(dp) {
-                    map_put(broken, project, dp);
+                    broken.insert(project, dp);
                     changed = true;
                     break;
                 }
@@ -660,7 +648,7 @@ fn mods_decide() -> bool {
         if chosen.contains(project) {
             continue;
         }
-        map_put(chosen, project, true);
+        chosen.insert(project, true);
         let entry = as_map(resolved.get(project));
         for dep in as_list(entry.get("deps")) {
             let dp = as_str(dep);
@@ -712,17 +700,17 @@ fn mods_decide() -> bool {
     for project in chosen.keys() {
         let entry = as_map(resolved.get(project));
         let f = new_map();
-        map_put(f, "project", project);
-        map_put(f, "title", mods_title(doc, project));
-        map_put(f, "file", as_str(entry.get("file")));
-        map_put(f, "url", as_str(entry.get("url")));
-        map_put(f, "sha1", as_str(entry.get("sha1")));
+        f.insert("project", project);
+        f.insert("title", mods_title(doc, project));
+        f.insert("file", as_str(entry.get("file")));
+        f.insert("url", as_str(entry.get("url")));
+        f.insert("sha1", as_str(entry.get("sha1")));
         final.push(f);
         if top.contains(project) == false {
             extra.push(mods_title(doc, project));
         }
     }
-    map_put(doc, "final", final);
+    doc.insert("final", final);
     mods_write_doc(doc);
 
     let report = "";
@@ -844,12 +832,12 @@ fn mods_on_loader_list(tag: string, response: any) -> bool {
             return mods_fail(profiles_loader_label(loader) + " could not be reached. "
                 + as_str(r.get("error")));
         }
-        map_put(doc, "loader_id", cached);
+        doc.insert("loader_id", cached);
         mods_write_doc(doc);
         return mods_fetch_files();
     }
     let loader_id = loader + "-loader-" + picked + "-" + version;
-    map_put(doc, "loader_id", loader_id);
+    doc.insert("loader_id", loader_id);
     mods_write_doc(doc);
     if files::exists(loaders_dir() + "/" + loader_id + ".json") {
         return mods_fetch_files();
@@ -957,7 +945,7 @@ fn mods_fetch_files() -> bool {
             }
         }
         let manifest = new_map();
-        map_put(manifest, "files", wanted);
+        manifest.insert("files", wanted);
         files::write(mods_manifest_path(game_dir), json_stringify(manifest));
 
         for item in as_list(doc.get("final")) {

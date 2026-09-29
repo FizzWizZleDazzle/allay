@@ -14,11 +14,14 @@
           <button id="account-signin" class="btn btn-primary" text="Sign in with Microsoft"/>
         </row>
 
+        <!-- <if> and <dialog> name their signal without the leading $ the bind-*
+             attributes carry: there the $ stays part of the name, and the gate
+             never opens (lumen-fx/lumen#414). -->
         <if signal="account_flow">
           <column class="account-flow" gap="12">
             <tile class="divider" height="1px"/>
             <column class="card-body" gap="12">
-              <label class="account-status" wrap="word" bind-text="account_status"/>
+              <label class="account-status" wrap="word" bind-text="$account_status"/>
 
               <if signal="account_code">
                 <column gap="10">
@@ -26,8 +29,8 @@
                   <!-- An <input> rather than a <label>: only a text field can
                        be selected, so this is what makes the code copyable by
                        hand when the clipboard button is not what you want. -->
-                  <input id="account-code-field" class="account-code" bind-text="account_code"/>
-                  <label class="account-url" wrap="word" bind-text="account_url"/>
+                  <input id="account-code-field" class="account-code" bind-text="$account_code"/>
+                  <label class="account-url" wrap="word" bind-text="$account_url"/>
                   <row gap="10">
                     <button id="account-open-browser" class="btn btn-outline" text="Open in browser"/>
                     <button id="account-copy-code" class="btn btn-quiet" text="Copy code"/>
@@ -50,7 +53,7 @@
       </if>
 
       <column class="accounts-list" gap="10">
-        <for each="accounts" key="id">
+        <for each="$accounts" key="id">
           <row class="account-card" align="center" gap="12">
             <column grow="1" gap="2">
               <label class="account-card-name" text="{row.name}"/>

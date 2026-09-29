@@ -78,6 +78,17 @@ fn make_dirs() -> bool {
     return true;
 }
 
+// An empty map or list that takes values of any type. A literal `{}` or `[]`
+// takes the type of the first thing put in it, and the documents built here
+// mix strings, numbers, flags, and nested maps.
+fn new_map() {
+    return as_map(lumen::parse_json("{}"));
+}
+
+fn new_list() {
+    return as_list(lumen::parse_json("[]"));
+}
+
 // --- Lifecycle ---------------------------------------------------------------
 
 // Allay is dark only, so the scheme is set once and never read back.
@@ -104,6 +115,8 @@ fn on_ready() {
     profiles_init();
     launch_init();
     lumen::on("click", "home-play", "home_play_clicked");
+    lumen::on("click", "browse-dir", "settings_browse_clicked");
+    lumen::on("folder_picked", "game-dir", "settings_folder_picked");
     home_refresh();
 }
 
@@ -160,8 +173,13 @@ fn home_refresh() -> bool {
     let list = profiles_of(d);
     signal<string>("home_profile_count").set(str(list.len()));
 
-    let versions = files::list(versions_dir());
-    signal<string>("home_version_count").set(str(versions.len()));
+    let installed = 0;
+    for name in files::list(versions_dir()) {
+        if install_is_installed(name) {
+            installed = installed + 1;
+        }
+    }
+    signal<string>("home_version_count").set(str(installed));
 
     let accounts = accounts_list_of(accounts_read_doc());
     signal<string>("home_account_count").set(str(accounts.len()));
@@ -226,21 +244,21 @@ fn home_play_clicked(id: string) -> bool {
     return profiles_play_last(iid);
 }
 
-// --- Shell handlers ----------------------------------------------------------
+// --- Settings page -----------------------------------------------------------
 
-fn on_click(id: string) {
-    if id == "browse-dir" {
-        lumen::pick_folder("game-dir");
-    }
+fn settings_browse_clicked(id: string) -> bool {
+    lumen::pick_folder("game-dir");
+    return true;
 }
 
-fn on_folder_picked(tag: string, path: string) {
-    if tag == "game-dir" {
-        if path != "" {
-            signal<string>("game_dir").set(path);
-            signal<string>("status").set("Game directory set");
-        }
+// A cancelled picker answers with an empty path, which keeps the setting.
+fn settings_folder_picked(tag: string, path: string) -> bool {
+    if path == "" {
+        return false;
     }
+    signal<string>("game_dir").set(path);
+    signal<string>("status").set("Game directory set");
+    return true;
 }
 
 fn main() {}

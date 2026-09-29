@@ -5,26 +5,29 @@
     <row class="profiles-head" align="center" gap="12">
       <column gap="2" grow="1">
         <label class="page-title" text="Profiles"/>
-        <label class="page-sub" bind-text="profiles_count_label" text="No profiles yet"/>
+        <label class="page-sub" bind-text="$profiles_count_label" text="No profiles yet"/>
       </column>
       <button id="prof-create-open" class="btn btn-primary" text="New profile"/>
     </row>
 
-    <label class="profiles-status" wrap="word" bind-text="profiles_status" text=""/>
+    <label class="profiles-status" wrap="word" bind-text="$profiles_status" text=""/>
 
     <!-- A profile is not tied to a game version; the version is picked at
          Play. -->
+    <!-- <if> and <dialog> name their signal without the leading $ the bind-*
+         attributes carry: there the $ stays part of the name, and the gate
+         never opens (lumen-fx/lumen#414). -->
     <if signal="create_open">
       <column class="profiles-create" gap="10">
         <label class="card-title" text="New profile"/>
         <row gap="10" align="center">
           <column gap="4" grow="1">
             <label class="field-hint" text="Name"/>
-            <input id="prof-new-name" class="control" placeholder="Survival with friends" bind-text="new_name"/>
+            <input id="prof-new-name" class="control" placeholder="Survival with friends" bind-text="$new_name"/>
           </column>
           <column gap="4" width="180px">
             <label class="field-hint" text="Mod loader"/>
-            <dropdown id="prof-new-loader" bind-value="new_loader" width="180">
+            <dropdown id="prof-new-loader" bind-value="$new_loader" width="180">
               <option value="Vanilla"/>
               <option value="Fabric"/>
               <option value="Quilt"/>
@@ -48,7 +51,7 @@
     </if>
 
     <column class="profiles-list" gap="10">
-      <for each="profiles" key="key">
+      <for each="$profiles" key="key">
         <row class="profile-card" gap="12" align="center">
           <column gap="4" grow="1">
             <label class="profile-name" wrap="ellipsis" text="{row.name}"/>
@@ -72,8 +75,8 @@
       <column class="profile-detail" gap="10">
         <row align="center" gap="10">
           <column gap="2" grow="1">
-            <label class="detail-title" bind-text="detail_name" text=""/>
-            <label class="detail-meta" bind-text="detail_summary" text=""/>
+            <label class="detail-title" bind-text="$detail_name" text=""/>
+            <label class="detail-meta" bind-text="$detail_summary" text=""/>
           </column>
           <button id="prof-detail-close" class="btn" text="Close"/>
         </row>
@@ -81,7 +84,7 @@
         <row gap="10" align="start">
           <column gap="4" width="180px">
             <label class="field-hint" text="Mod loader"/>
-            <dropdown id="prof-detail-loader" bind-value="detail_loader" width="180">
+            <dropdown id="prof-detail-loader" bind-value="$detail_loader" width="180">
               <option value="Vanilla"/>
               <option value="Fabric"/>
               <option value="Quilt"/>
@@ -89,20 +92,20 @@
           </column>
           <column gap="4" width="160px">
             <label class="field-hint" text="Java memory (MB)"/>
-            <input id="prof-detail-memory" class="control" placeholder="2048" bind-text="detail_memory"/>
+            <input id="prof-detail-memory" class="control" placeholder="2048" bind-text="$detail_memory"/>
           </column>
           <column gap="4" grow="1">
             <label class="field-hint" text="Notes"/>
             <textarea id="prof-detail-notes" class="control" height="90px" wrap="word"
                       placeholder="Resource packs, servers, anything worth remembering"
-                      bind-text="detail_notes"/>
+                      bind-text="$detail_notes"/>
           </column>
         </row>
 
         <row gap="16">
-          <label class="detail-meta" bind-text="detail_created_label" text=""/>
-          <label class="detail-meta" bind-text="detail_played_label" text=""/>
-          <label class="detail-meta" bind-text="detail_dirs_label" text=""/>
+          <label class="detail-meta" bind-text="$detail_created_label" text=""/>
+          <label class="detail-meta" bind-text="$detail_played_label" text=""/>
+          <label class="detail-meta" bind-text="$detail_dirs_label" text=""/>
         </row>
 
         <row gap="8" justify="end">
@@ -119,7 +122,7 @@
           <label class="empty-body" text="No mods. Search Modrinth below to add some."/>
         </if>
         <column class="mod-list" gap="6">
-          <for each="detail_mods" key="key">
+          <for each="$detail_mods" key="key">
             <row class="mod-row" gap="10" align="center">
               <label class="mod-title" grow="1" wrap="ellipsis" text="{row.title}"/>
               <button id="modreq|{row.id}" class="btn btn-quiet" text="{row.required_label}"/>
@@ -127,16 +130,16 @@
             </row>
           </for>
         </column>
-        <label class="profiles-status" wrap="word" bind-text="mods_status" text=""/>
+        <label class="profiles-status" wrap="word" bind-text="$mods_status" text=""/>
 
         <row gap="8" align="center">
           <input id="mods-query" class="control" grow="1" placeholder="Search Modrinth, for example sodium"
-                 bind-text="mods_query"/>
+                 bind-text="$mods_query"/>
           <button id="mods-search" class="btn btn-outline" text="Search"/>
         </row>
-        <label class="profiles-status" wrap="word" bind-text="mods_search_status" text=""/>
+        <label class="profiles-status" wrap="word" bind-text="$mods_search_status" text=""/>
         <column class="mod-list" gap="6">
-          <for each="mods_results" key="id">
+          <for each="$mods_results" key="id">
             <row class="mod-row" gap="10" align="center">
               <column gap="2" grow="1">
                 <row gap="8" align="center">
@@ -162,7 +165,7 @@
             </if>
           </row>
           <scroll class="launch-log">
-            <label class="launch-log-text" wrap="word" bind-text="launch_log" text=""/>
+            <label class="launch-log-text" wrap="word" bind-text="$launch_log" text=""/>
           </scroll>
         </if>
       </column>
@@ -171,7 +174,7 @@
     <dialog open="rename_open">
       <column class="profiles-dialog" gap="12" width="360px">
         <label class="card-title" text="Rename profile"/>
-        <input id="prof-rename-input" class="control" autofocus="true" bind-text="rename_value"/>
+        <input id="prof-rename-input" class="control" autofocus="true" bind-text="$rename_value"/>
         <row gap="8" justify="end">
           <button id="prof-rename-cancel" class="btn" text="Cancel"/>
           <button id="prof-rename-ok" class="btn btn-primary" default="true" text="Rename"/>
@@ -182,7 +185,7 @@
     <dialog open="confirm_open">
       <column class="profiles-dialog" gap="12" width="360px">
         <label class="card-title" text="Delete profile"/>
-        <label class="empty-body" wrap="word" bind-text="confirm_text" text=""/>
+        <label class="empty-body" wrap="word" bind-text="$confirm_text" text=""/>
         <row gap="8" justify="end">
           <button id="prof-delete-cancel" class="btn" text="Cancel"/>
           <button id="prof-delete-ok" class="btn btn-danger" default="true" text="Delete"/>

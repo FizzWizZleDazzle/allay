@@ -20,13 +20,6 @@ import "std/time";
 // defines no global on_click / on_text_input and no on_ready: the app-wide
 // on_ready calls profiles_init() once.
 
-// A map read out of parse_json is typed `any`, so calling insert straight on
-// one resolves the list overload; passing it through an untyped parameter
-// picks the map one.
-fn map_put(m, k, v) {
-    m.insert(k, v);
-}
-
 // --- Storage -----------------------------------------------------------------
 
 fn profiles_empty_doc() -> string {
@@ -107,7 +100,7 @@ fn profiles_migrate() -> bool {
     }
     let old = as_map(parsed);
     let d = profiles_read_doc();
-    map_put(d, "next_seq", as_int(old.get("next_seq")));
+    d.insert("next_seq", as_int(old.get("next_seq")));
     let list = profiles_of(d);
     let moved_all = true;
     let items = as_list(old.get("instances"));
@@ -115,10 +108,10 @@ fn profiles_migrate() -> bool {
         let m = as_map(item);
         let id = as_str(m.get("id"));
         let version = as_str(m.get("game_version"));
-        map_put(m, "mods", []);
+        m.insert("mods", []);
         let loader = as_str(m.get("loader"));
         if loader == "" {
-            map_put(m, "loader", "vanilla");
+            m.insert("loader", "vanilla");
         }
         list.push(m);
         let from = legacy_instances_dir() + "/" + id;
@@ -210,16 +203,16 @@ fn profiles_decorate(m) -> bool {
     if mb > 0 {
         label = str(mb) + " MB";
     }
-    map_put(m, "memory_label", label);
+    m.insert("memory_label", label);
     let loader = as_str(m.get("loader"));
-    map_put(m, "loader_label", profiles_loader_label(loader));
+    m.insert("loader_label", profiles_loader_label(loader));
     let mods = profiles_mods_of(m);
-    map_put(m, "mods_label", profiles_count_label(mods.len(), "mod", "mods"));
+    m.insert("mods_label", profiles_count_label(mods.len(), "mod", "mods"));
     let version = as_str(m.get("game_version"));
     if version == "" {
-        map_put(m, "version_label", "not played yet");
+        m.insert("version_label", "not played yet");
     } else {
-        map_put(m, "version_label", "last on " + version);
+        m.insert("version_label", "last on " + version);
     }
     return true;
 }
@@ -242,7 +235,7 @@ fn profiles_refresh(d) -> bool {
     while i < rows.len() {
         let m = as_map(rows[i]);
         profiles_decorate(m);
-        map_put(m, "key", profiles_row_key(as_str(m.get("id"))));
+        m.insert("key", profiles_row_key(as_str(m.get("id"))));
         i = i + 1;
     }
     signal_array("profiles").set(rows);
@@ -346,7 +339,7 @@ fn profiles_create_confirm(id: string) -> bool {
     let d = profiles_read_doc();
     let seq = as_int(d.get("next_seq"));
     let new_id = "profile-" + str(seq);
-    map_put(d, "next_seq", seq + 1);
+    d.insert("next_seq", seq + 1);
 
     let text = profiles_record_text(new_id, wanted, loader);
     let parsed = lumen::parse_json(text);
@@ -456,7 +449,7 @@ fn profiles_record_version(pid: string, version: string) -> bool {
         return false;
     }
     let m = as_map(list[at]);
-    map_put(m, "game_version", version);
+    m.insert("game_version", version);
     profiles_persist(d);
     profiles_refresh(d);
     return true;
@@ -474,7 +467,7 @@ fn profiles_record_played(pid: string) -> bool {
         return false;
     }
     let m = as_map(list[at]);
-    map_put(m, "last_played", format(now(), "%Y-%m-%d %H:%M"));
+    m.insert("last_played", format(now(), "%Y-%m-%d %H:%M"));
     profiles_persist(d);
     profiles_refresh(d);
     if signal<string>("detail_id").get() == pid {
@@ -573,9 +566,9 @@ fn profiles_detail_save(id: string) -> bool {
         return false;
     }
     let m = as_map(list[at]);
-    map_put(m, "memory_mb", mb);
-    map_put(m, "notes", notes);
-    map_put(m, "loader", loader);
+    m.insert("memory_mb", mb);
+    m.insert("notes", notes);
+    m.insert("loader", loader);
 
     profiles_persist(d);
     profiles_refresh(d);
@@ -654,12 +647,12 @@ fn profiles_mod_add(project: string, slug: string, title: string) -> bool {
     }
     let entry = {"id": project, "slug": slug, "title": title};
     let record = as_map(lumen::parse_json(json_stringify(entry)));
-    map_put(record, "required", false);
+    record.insert("required", false);
     mods.push(record);
-    map_put(m, "mods", mods);
+    m.insert("mods", mods);
     let note = "";
     if as_str(m.get("loader")) == "vanilla" {
-        map_put(m, "loader", "fabric");
+        m.insert("loader", "fabric");
         note = " The profile now uses Fabric, which mods need.";
     }
     profiles_persist(d);
@@ -691,7 +684,7 @@ fn profiles_mod_edit(id: string, remove: bool) -> bool {
         signal<string>("mods_status").set("Removed " + title + ".");
     } else {
         let required = mod_required(e) == false;
-        map_put(e, "required", required);
+        e.insert("required", required);
         if required {
             signal<string>("mods_status").set(title + " is required: on a version it has "
                 + "no build for, the game does not start.");
@@ -700,7 +693,7 @@ fn profiles_mod_edit(id: string, remove: bool) -> bool {
                 + "no build for, the game starts without it.");
         }
     }
-    map_put(m, "mods", mods);
+    m.insert("mods", mods);
     profiles_persist(d);
     profiles_refresh(d);
     profiles_show_detail(pid);
@@ -757,7 +750,7 @@ fn profiles_rename_ok(id: string) -> bool {
         return false;
     }
     let m = as_map(list[at]);
-    map_put(m, "name", name);
+    m.insert("name", name);
 
     profiles_persist(d);
     profiles_refresh(d);
@@ -789,11 +782,11 @@ fn profiles_duplicate_clicked(id: string) -> bool {
 
     let seq = as_int(d.get("next_seq"));
     let new_id = "profile-" + str(seq);
-    map_put(d, "next_seq", seq + 1);
-    map_put(copy, "id", new_id);
+    d.insert("next_seq", seq + 1);
+    copy.insert("id", new_id);
     let name = as_str(source.get("name"));
-    map_put(copy, "name", name + " copy");
-    map_put(copy, "last_played", "");
+    copy.insert("name", name + " copy");
+    copy.insert("last_played", "");
     list.push(copy);
 
     profiles_persist(d);
