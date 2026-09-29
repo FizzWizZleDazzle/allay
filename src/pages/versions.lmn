@@ -4,37 +4,40 @@
     <row class="versions-head" align="center" gap="12">
       <label style="headline-md" text="Minecraft versions"/>
       <spacer/>
-      <label class="versions-status" bind-text="versions_status"/>
+      <label class="versions-status" bind-text="$versions_status"/>
       <button id="versions-refresh" text="Refresh"/>
     </row>
 
     <row class="versions-latest" gap="12">
       <column class="versions-card" gap="4" padding="12" radius="8" grow="1">
         <label class="versions-card-kind" style="label-md" text="Latest release"/>
-        <label class="versions-card-id" style="title-md" bind-text="versions_latest_release"/>
+        <label class="versions-card-id" style="title-md" bind-text="$versions_latest_release"/>
         <button id="versions-use-latest-release" text="Pick for Play"/>
       </column>
       <column class="versions-card" gap="4" padding="12" radius="8" grow="1">
         <label class="versions-card-kind" style="label-md" text="Latest snapshot"/>
-        <label class="versions-card-id" style="title-md" bind-text="versions_latest_snapshot"/>
+        <label class="versions-card-id" style="title-md" bind-text="$versions_latest_snapshot"/>
         <button id="versions-use-latest-snapshot" text="Pick for Play"/>
       </column>
     </row>
 
     <row class="versions-filters" align="center" gap="8">
-      <dropdown id="versions-type" bind-value="versions_filter_type" width="220">
+      <dropdown id="versions-type" bind-value="$versions_filter_type" width="220">
         <option value="Releases"/>
         <option value="Snapshots"/>
         <option value="Old beta and alpha"/>
         <option value="All versions"/>
       </dropdown>
-      <input id="versions-search" bind-text="versions_query" placeholder="Search by version id" grow="1"/>
-      <label class="versions-count" bind-text="versions_count"/>
+      <input id="versions-search" bind-text="$versions_query" placeholder="Search by version id" grow="1"/>
+      <label class="versions-count" bind-text="$versions_count"/>
     </row>
 
+    <!-- <if> and <dialog> name their signal without the leading $ the bind-*
+         attributes carry: there the $ stays part of the name, and the gate
+         never opens (lumen-fx/lumen#414). -->
     <if signal="versions_chosen">
       <row class="versions-chosen" align="center" gap="8" padding="8" radius="6">
-        <label class="versions-chosen-text" bind-text="versions_chosen_text"/>
+        <label class="versions-chosen-text" bind-text="$versions_chosen_text"/>
         <spacer/>
         <button id="versions-clear-choice" text="Clear"/>
       </row>
@@ -43,19 +46,19 @@
     <if signal="install_id">
       <column class="versions-install" gap="8">
         <row align="center" gap="10">
-          <label class="versions-install-title" bind-text="install_id"/>
-          <label class="versions-install-status" grow="1" bind-text="install_status"/>
+          <label class="versions-install-title" bind-text="$install_id"/>
+          <label class="versions-install-status" grow="1" bind-text="$install_status"/>
           <button id="install-cancel" class="btn btn-quiet" text="Dismiss"/>
         </row>
-        <progress class="versions-install-bar" max="100" bind-value="install_percent"/>
-        <label class="versions-install-error" wrap="word" bind-text="install_error"/>
+        <progress class="versions-install-bar" max="100" bind-value="$install_percent"/>
+        <label class="versions-install-error" wrap="word" bind-text="$install_error"/>
       </column>
     </if>
 
     <dialog open="uninstall_open">
       <column class="profiles-dialog" gap="12" width="380px">
         <label class="card-title" text="Remove version"/>
-        <label class="empty-body" wrap="word" bind-text="uninstall_text" text=""/>
+        <label class="empty-body" wrap="word" bind-text="$uninstall_text" text=""/>
         <row gap="8" justify="end">
           <button id="uninstall-cancel" class="btn" text="Cancel"/>
           <button id="uninstall-ok" class="btn btn-danger" default="true" text="Remove"/>
@@ -65,7 +68,7 @@
 
     <if signal="versions_failed">
       <column class="versions-failed" gap="8" padding="12" radius="8">
-        <label bind-text="versions_failed_text"/>
+        <label bind-text="$versions_failed_text"/>
         <row>
           <button id="versions-retry" text="Try again"/>
         </row>
@@ -73,7 +76,7 @@
     </if>
 
     <column class="versions-list">
-      <for each="versions_view" key="key">
+      <for each="$versions_view" key="key">
         <row class="versions-row" align="center" gap="12" padding="6">
           <label class="versions-row-id" width="240" wrap="ellipsis" text="{row.id}"/>
           <label class="versions-row-type" width="120" text="{row.type}"/>

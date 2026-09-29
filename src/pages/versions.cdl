@@ -40,8 +40,7 @@ fn versions_init() -> bool {
 fn versions_request() -> bool {
     signal<string>("versions_status").set("Checking for updates...");
     let url = versions_manifest_url();
-    let spec = "{\"url\":\"" + url + "\",\"tag\":\"allay-version-manifest\",\"timeout_ms\":15000}";
-    let request = lumen::parse_json(spec);
+    let request = {"url": url, "tag": "allay-version-manifest", "timeout_ms": "15000"};
     lumen::http(request);
     return true;
 }

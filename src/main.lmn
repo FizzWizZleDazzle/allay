@@ -11,15 +11,18 @@
       <row class="hero" gap="20">
         <column id="last-played" class="card card-feature" grow="1" gap="16">
 
+          <!-- <if> and <dialog> name their signal without the leading $ the bind-*
+               attributes carry: there the $ stays part of the name, and the gate
+               never opens (lumen-fx/lumen#414). -->
           <if signal="home_has_profile">
             <column gap="16" grow="1">
               <row class="badges" gap="8" align="center">
-                <label class="badge" bind-text="home_last_version" text=""/>
-                <label class="badge" bind-text="home_last_loader" text=""/>
+                <label class="badge" bind-text="$home_last_version" text=""/>
+                <label class="badge" bind-text="$home_last_loader" text=""/>
               </row>
               <column gap="4">
-                <label class="feature-title" bind-text="home_last_name" text=""/>
-                <label class="feature-meta" bind-text="home_last_meta" text=""/>
+                <label class="feature-title" bind-text="$home_last_name" text=""/>
+                <label class="feature-meta" bind-text="$home_last_meta" text=""/>
               </column>
               <spacer/>
               <row class="cta" gap="10" align="center">
@@ -54,15 +57,15 @@
           <column class="stat-list" gap="0">
             <row class="stat" align="center">
               <label class="stat-label" grow="1" text="Profiles"/>
-              <label class="stat-value" bind-text="home_profile_count" text="0"/>
+              <label class="stat-value" bind-text="$home_profile_count" text="0"/>
             </row>
             <row class="stat" align="center">
               <label class="stat-label" grow="1" text="Installed versions"/>
-              <label class="stat-value" bind-text="home_version_count" text="0"/>
+              <label class="stat-value" bind-text="$home_version_count" text="0"/>
             </row>
             <row class="stat" align="center">
               <label class="stat-label" grow="1" text="Accounts"/>
-              <label class="stat-value" bind-text="home_account_count" text="0"/>
+              <label class="stat-value" bind-text="$home_account_count" text="0"/>
             </row>
           </column>
           <tile class="divider" height="1px"/>
@@ -78,7 +81,7 @@
         </row>
         <tile class="divider" height="1px"/>
         <column class="card-body" gap="6">
-          <label class="feature-meta" wrap="word" bind-text="java_version"
+          <label class="feature-meta" wrap="word" bind-text="$java_version"
                  text="Looking for java..."/>
           <label class="field-hint" wrap="word"
                  text="Allay runs the java it finds on PATH. Set the heap size and any extra arguments in Settings."/>

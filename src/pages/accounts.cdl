@@ -105,13 +105,13 @@ fn accounts_refresh() -> bool {
         let a = as_map(entry);
         let id = as_str(a.get("id"));
         if id == active {
-            map_put(a, "state", "Active");
+            a.insert("state", "Active");
             active_name = as_str(a.get("name"));
             active_kind = accounts_kind_label(as_str(a.get("type")));
         } else {
-            map_put(a, "state", "");
+            a.insert("state", "");
         }
-        map_put(a, "kind_label", accounts_kind_label(as_str(a.get("type"))));
+        a.insert("kind_label", accounts_kind_label(as_str(a.get("type"))));
         rows.push(entry);
     }
 
@@ -153,7 +153,7 @@ fn accounts_active() {
     let m = as_map(d);
     let active = as_str(m.get("active"));
     let list = accounts_list_of(d);
-    let found = lumen::parse_json("{}");
+    let found = new_map();
     for entry in list {
         let a = as_map(entry);
         if as_str(a.get("id")) == active {
@@ -202,20 +202,11 @@ fn accounts_open_browser(id: string) -> bool {
 
 // --- Request helpers ------------------------------------------------------------
 
-// A request spec is built by parsing a small JSON template and inserting the
-// body, so a payload that is itself JSON never has to be escaped into a
-// candela string literal twice.
 fn accounts_request(url: string, tag: string, content_type: string, body: string) -> bool {
-    let spec = lumen::parse_json("{\"method\":\"POST\",\"timeout_ms\":30000}");
-    let m = as_map(spec);
-    map_put(m, "url", url);
-    map_put(m, "tag", tag);
-    map_put(m, "body", body);
-    let headers = as_map(lumen::parse_json("{}"));
-    map_put(headers, "Content-Type", content_type);
-    map_put(headers, "Accept", "application/json");
-    map_put(m, "headers", headers);
-    lumen::http(spec);
+    let request = {"method": "POST", "url": url, "tag": tag, "body": body,
+                   "timeout_ms": "30000", "header:Content-Type": content_type,
+                   "header:Accept": "application/json"};
+    lumen::http(request);
     return true;
 }
 
@@ -228,15 +219,10 @@ fn accounts_post_json(url: string, body: string, tag: string) -> bool {
 }
 
 fn accounts_get(url: string, tag: string, bearer: string) -> bool {
-    let spec = lumen::parse_json("{\"method\":\"GET\",\"timeout_ms\":30000}");
-    let m = as_map(spec);
-    map_put(m, "url", url);
-    map_put(m, "tag", tag);
-    let headers = as_map(lumen::parse_json("{}"));
-    map_put(headers, "Authorization", "Bearer " + bearer);
-    map_put(headers, "Accept", "application/json");
-    map_put(m, "headers", headers);
-    lumen::http(spec);
+    let authorization = "Bearer " + bearer;
+    let request = {"method": "GET", "url": url, "tag": tag, "timeout_ms": "30000",
+                   "header:Authorization": authorization, "header:Accept": "application/json"};
+    lumen::http(request);
     return true;
 }
 
@@ -386,9 +372,7 @@ fn accounts_on_xbl(tag: string, response: any) -> bool {
     let token = as_str(body.get("Token"));
     signal<string>("account_xbl_token").set(token);
 
-    // The user hash sits in a nested claim list. It is read here rather than
-    // in a helper: a nested value fetched from a map that arrived through an
-    // untyped parameter comes back as a string (lumen-fx/lumen#307).
+    // The user hash sits in a nested claim list.
     let uhs = "";
     if body.contains("DisplayClaims") {
         let claims = as_map(body.get("DisplayClaims"));
@@ -525,20 +509,19 @@ fn accounts_store(name: string, uuid: string) -> bool {
         id = as_str(as_map(list[at]).get("id"));
         list.remove(at);
     } else {
-        map_put(m, "next_seq", as_int(m.get("next_seq")) + 1);
+        m.insert("next_seq", as_int(m.get("next_seq")) + 1);
     }
 
-    let record = lumen::parse_json("{}");
-    let rm = as_map(record);
-    map_put(rm, "id", id);
-    map_put(rm, "type", "msa");
-    map_put(rm, "name", name);
-    map_put(rm, "uuid", uuid);
-    map_put(rm, "access_token", signal<string>("account_mc_token").get());
-    map_put(rm, "refresh_token", signal<string>("account_refresh_token").get());
-    list.push(record);
+    let rm = new_map();
+    rm.insert("id", id);
+    rm.insert("type", "msa");
+    rm.insert("name", name);
+    rm.insert("uuid", uuid);
+    rm.insert("access_token", signal<string>("account_mc_token").get());
+    rm.insert("refresh_token", signal<string>("account_refresh_token").get());
+    list.push(rm);
 
-    map_put(m, "active", id);
+    m.insert("active", id);
     accounts_persist(d);
     accounts_clear_secrets();
 
@@ -573,7 +556,7 @@ fn accounts_use_clicked(id: string) -> bool {
     let acct = accounts_row_id(id);
     let d = accounts_read_doc();
     let m = as_map(d);
-    map_put(m, "active", acct);
+    m.insert("active", acct);
     accounts_persist(d);
     accounts_refresh();
     return true;
@@ -597,7 +580,7 @@ fn accounts_drop_clicked(id: string) -> bool {
     }
     list.remove(at);
     if as_str(m.get("active")) == acct {
-        map_put(m, "active", "");
+        m.insert("active", "");
     }
     accounts_persist(d);
     accounts_refresh();

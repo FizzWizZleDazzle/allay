@@ -99,7 +99,7 @@ fn launch_loader_classpath(loader, taken) -> string {
         if path == "" {
             continue;
         }
-        map_put(taken, launch_lib_key(name), true);
+        taken.insert(launch_lib_key(name), true);
         cp = cp + libraries_dir() + "/" + path + ":";
     }
     return cp;

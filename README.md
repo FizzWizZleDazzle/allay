@@ -16,10 +16,10 @@ Microsoft account, and playing.
 ## Run from source
 
 Install the Lumen toolchain, 0.0.8 or newer, from
-[lumenfx.dev](https://lumenfx.dev), then
-unpack the runtime modules for your platform from the same release into
-`~/.lumen`; Allay uses the filesystem, download, archive, and process modules
-and will not do anything useful without them.
+[lumenfx.dev](https://lumenfx.dev). The installer also puts the runtime
+modules in place, and Allay needs four of them: filesystem, download,
+archive, and process. A toolchain installed with `--no-modules` runs Allay
+without them, and it can then neither install nor start a game.
 
 ```sh
 lumenc run .

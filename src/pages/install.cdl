@@ -337,8 +337,7 @@ fn install_start(version: string) -> bool {
     files::mkdir(versions_dir() + "/" + version);
     files::mkdir(install_natives_dir(version));
 
-    let spec = "{\"url\":\"" + url + "\",\"tag\":\"allay-version-json\",\"timeout_ms\":20000}";
-    let request = lumen::parse_json(spec);
+    let request = {"url": url, "tag": "allay-version-json", "timeout_ms": "20000"};
     lumen::http(request);
     return true;
 }
@@ -385,8 +384,7 @@ fn install_on_version_json(tag: string, response: any) -> bool {
     let url = as_str(index.get("url"));
     signal<string>("install_asset_id").set(as_str(index.get("id")));
     signal<string>("install_status").set("Reading the asset index...");
-    let spec = "{\"url\":\"" + url + "\",\"tag\":\"allay-asset-index\",\"timeout_ms\":20000}";
-    let request = lumen::parse_json(spec);
+    let request = {"url": url, "tag": "allay-asset-index", "timeout_ms": "20000"};
     lumen::http(request);
     return true;
 }
@@ -664,16 +662,7 @@ fn install_extract_next() -> bool {
         install_flatten_natives();
         return install_finish();
     }
-    // The paths went in as plain strings. The docs say one comes back as a
-    // one-field `value` record, and it comes back bare (lumen-fx/lumen#410),
-    // so both shapes are read.
-    let item = signal_array("install_natives_queue").get(at);
-    let path = "";
-    if is_map(item) {
-        path = as_str(as_map(item).get("value"));
-    } else {
-        path = as_str(item);
-    }
+    let path = as_str(signal_array("install_natives_queue").get(at));
     signal<int>("install_natives_at").set(at + 1);
     signal<string>("install_status").set("Unpacking native libraries "
         + str(at + 1) + " of " + str(queued));
