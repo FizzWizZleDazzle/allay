@@ -12,12 +12,12 @@
       <column class="versions-card" gap="4" padding="12" radius="8" grow="1">
         <label class="versions-card-kind" style="label-md" text="Latest release"/>
         <label class="versions-card-id" style="title-md" bind-text="versions_latest_release"/>
-        <button id="versions-use-latest-release" text="Use for new instance"/>
+        <button id="versions-use-latest-release" text="Pick for Play"/>
       </column>
       <column class="versions-card" gap="4" padding="12" radius="8" grow="1">
         <label class="versions-card-kind" style="label-md" text="Latest snapshot"/>
         <label class="versions-card-id" style="title-md" bind-text="versions_latest_snapshot"/>
-        <button id="versions-use-latest-snapshot" text="Use for new instance"/>
+        <button id="versions-use-latest-snapshot" text="Pick for Play"/>
       </column>
     </row>
 
@@ -53,7 +53,7 @@
     </if>
 
     <dialog open="uninstall_open">
-      <column class="instances-dialog" gap="12" width="380px">
+      <column class="profiles-dialog" gap="12" width="380px">
         <label class="card-title" text="Remove version"/>
         <label class="empty-body" wrap="word" bind-text="uninstall_text" text=""/>
         <row gap="8" justify="end">
@@ -73,13 +73,13 @@
     </if>
 
     <column class="versions-list">
-      <for each="versions_view" key="id">
+      <for each="versions_view" key="key">
         <row class="versions-row" align="center" gap="12" padding="6">
           <label class="versions-row-id" width="240" wrap="ellipsis" text="{row.id}"/>
           <label class="versions-row-type" width="120" text="{row.type}"/>
           <label class="versions-row-date" grow="1" text="{row.date}"/>
           <button id="{row.id}:install" class="versions-row-install" text="{row.install_label}"/>
-          <button id="{row.id}:use" class="versions-row-use" text="Use for new instance"/>
+          <button id="{row.id}:use" class="versions-row-use" text="Pick for Play"/>
         </row>
       </for>
     </column>

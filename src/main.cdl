@@ -13,8 +13,18 @@ fn settings_path() -> string {
     return files::data_dir() + "/settings.json";
 }
 
-fn instances_path() -> string {
+fn profiles_path() -> string {
+    return files::data_dir() + "/profiles.json";
+}
+
+// Where instances were kept before profiles replaced them. Read once, to carry
+// them over, and removed after.
+fn legacy_instances_path() -> string {
     return files::data_dir() + "/instances.json";
+}
+
+fn legacy_instances_dir() -> string {
+    return files::data_dir() + "/instances";
 }
 
 fn manifest_cache_path() -> string {
@@ -41,9 +51,21 @@ fn assets_dir() -> string {
     return files::data_dir() + "/assets";
 }
 
-// One game directory per instance, passed to the game as --gameDir.
-fn instances_dir() -> string {
-    return files::data_dir() + "/instances";
+// One directory per profile, and inside it one game directory per game
+// version, passed to the game as --gameDir. The settings page can move the
+// whole tree somewhere else.
+fn profiles_dir() -> string {
+    let configured = signal<string>("game_dir").get();
+    if configured.trim() != "" {
+        return configured;
+    }
+    return files::data_dir() + "/profiles";
+}
+
+// The Fabric and Quilt launch profiles, one JSON file per loader build and
+// game version. Their libraries go in the shared libraries directory.
+fn loaders_dir() -> string {
+    return files::data_dir() + "/loaders";
 }
 
 fn make_dirs() -> bool {
@@ -52,7 +74,7 @@ fn make_dirs() -> bool {
     files::mkdir(natives_dir());
     files::mkdir(assets_dir() + "/indexes");
     files::mkdir(assets_dir() + "/objects");
-    files::mkdir(instances_dir());
+    files::mkdir(loaders_dir());
     return true;
 }
 
@@ -64,9 +86,9 @@ fn on_start() {
     make_dirs();
     load_settings();
 
-    let status = signal("status");
+    let status = signal<string>("status");
     status.set("Ready");
-    signal("data_dir_label").set("Everything Allay writes lives in " + files::data_dir());
+    signal<string>("data_dir_label").set("Everything Allay writes lives in " + files::data_dir());
 
     lumen::derive("settings_saved",
                   ["jvm_memory", "jvm_args", "game_dir"],
@@ -79,7 +101,7 @@ fn on_ready() {
     accounts_init();
     versions_init();
     install_init();
-    instances_init();
+    profiles_init();
     launch_init();
     lumen::on("click", "home-play", "home_play_clicked");
     home_refresh();
@@ -109,9 +131,9 @@ fn load_settings() -> bool {
         }
     }
 
-    signal("jvm_memory").set_float(memory);
-    signal("jvm_args").set(args);
-    signal("game_dir").set(dir);
+    signal<float>("jvm_memory").set(memory);
+    signal<string>("jvm_args").set(args);
+    signal<string>("game_dir").set(dir);
     return true;
 }
 
@@ -134,79 +156,74 @@ fn format_memory(memory: float) -> string {
 // whenever something it counts changes, rather than being derived, because its
 // inputs are files rather than signals.
 fn home_refresh() -> bool {
-    let d = instances_read_doc();
-    let list = instances_of(d);
-    signal("home_instance_count").set(str(list.len()));
+    let d = profiles_read_doc();
+    let list = profiles_of(d);
+    signal<string>("home_profile_count").set(str(list.len()));
 
     let versions = files::list(versions_dir());
-    signal("home_version_count").set(str(versions.len()));
+    signal<string>("home_version_count").set(str(versions.len()));
 
     let accounts = accounts_list_of(accounts_read_doc());
-    signal("home_account_count").set(str(accounts.len()));
+    signal<string>("home_account_count").set(str(accounts.len()));
 
     return home_pick_last(list);
 }
 
-// candela does not order strings, so the stamp is reduced to the number its
-// digits spell. The format is fixed-width, so the ordering is the same.
-fn stamp_key(stamp: string) -> int {
-    let digits = stamp.replace("-", "").replace(" ", "").replace(":", "");
-    if is_int(digits) == false {
-        return 0;
-    }
-    return int(digits);
-}
-
-// The card shows whichever instance was played most recently, and the first
+// The card shows whichever profile was played most recently, and the first
 // one in the list until any of them has been played.
 fn home_pick_last(list) -> bool {
-    signal("home_has_instance").set("");
-    signal("home_no_instance").set("1");
+    signal<string>("home_has_profile").set("");
+    signal<string>("home_no_profile").set("1");
     if list.len() == 0 {
         return true;
     }
 
+    // The stamp is fixed-width, so ordering the text orders the times.
     let best = as_map(list[0]);
     let best_stamp = "";
-    let best_key = -1;
     for entry in list {
         let m = as_map(entry);
         let stamp = as_str(m.get("last_played"));
-        let key = stamp_key(stamp);
-        if key > best_key {
-            best_key = key;
+        if stamp > best_stamp {
             best_stamp = stamp;
             best = m;
         }
     }
 
-    signal("home_last_id").set(as_str(best.get("id")));
-    signal("home_last_name").set(as_str(best.get("name")));
-    signal("home_last_version").set(as_str(best.get("game_version")));
-    signal("home_last_loader").set(as_str(best.get("loader")));
+    signal<string>("home_last_id").set(as_str(best.get("id")));
+    signal<string>("home_last_name").set(as_str(best.get("name")));
+    let version = as_str(best.get("game_version"));
+    if version == "" {
+        version = "no version yet";
+    }
+    signal<string>("home_last_version").set(version);
+    signal<string>("home_last_loader").set(profiles_loader_label(as_str(best.get("loader"))));
 
     let mb = as_int(best.get("memory_mb"));
     let played = "never played";
     if best_stamp != "" {
         played = "last played " + best_stamp;
     }
-    let installed = "not installed";
-    if install_is_installed(as_str(best.get("game_version"))) {
-        installed = "installed";
+    let mods = profiles_mods_of(best).len();
+    let mods_label = "no mods";
+    if mods == 1 {
+        mods_label = "1 mod";
+    } else if mods > 1 {
+        mods_label = str(mods) + " mods";
     }
-    signal("home_last_meta").set(played + "  -  " + str(mb) + " MB heap  -  " + installed);
+    signal<string>("home_last_meta").set(played + "  -  " + mods_label + "  -  " + str(mb) + " MB heap");
 
-    signal("home_has_instance").set("1");
-    signal("home_no_instance").set("");
+    signal<string>("home_has_profile").set("1");
+    signal<string>("home_no_profile").set("");
     return true;
 }
 
 fn home_play_clicked(id: string) -> bool {
-    let iid = signal("home_last_id").get();
+    let iid = signal<string>("home_last_id").get();
     if iid == "" {
         return false;
     }
-    return instances_play_clicked("play|" + iid);
+    return profiles_play_last(iid);
 }
 
 // --- Shell handlers ----------------------------------------------------------
@@ -220,8 +237,8 @@ fn on_click(id: string) {
 fn on_folder_picked(tag: string, path: string) {
     if tag == "game-dir" {
         if path != "" {
-            signal("game_dir").set(path);
-            signal("status").set("Game directory set");
+            signal<string>("game_dir").set(path);
+            signal<string>("status").set("Game directory set");
         }
     }
 }

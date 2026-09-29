@@ -185,7 +185,7 @@ scroll {
 }
 
 .shell-home #nav-home,
-.shell-instances #nav-instances,
+.shell-profiles #nav-profiles,
 .shell-versions #nav-versions,
 .shell-accounts #nav-accounts,
 .shell-settings #nav-settings {
@@ -194,7 +194,7 @@ scroll {
 }
 
 .shell-home #nav-home .nav-rail,
-.shell-instances #nav-instances .nav-rail,
+.shell-profiles #nav-profiles .nav-rail,
 .shell-versions #nav-versions .nav-rail,
 .shell-accounts #nav-accounts .nav-rail,
 .shell-settings #nav-settings .nav-rail {
@@ -202,7 +202,7 @@ scroll {
 }
 
 .shell-home #nav-home .nav-label,
-.shell-instances #nav-instances .nav-label,
+.shell-profiles #nav-profiles .nav-label,
 .shell-versions #nav-versions .nav-label,
 .shell-accounts #nav-accounts .nav-label,
 .shell-settings #nav-settings .nav-label {
@@ -762,8 +762,11 @@ checkbox:checked, radio:checked {
   bg: var(--scrim);
 }
 
+/* Without a zero minimum the scroller grows to its content instead of
+   scrolling it (lumen-fx/lumen#406). */
 .content-scroll {
   bg: #00000000;
+  min-height: 0;
 }
 
 /* Shell pieces that carry no colour of their own */
@@ -921,13 +924,13 @@ checkbox:checked, radio:checked {
   text-color: var(--text-3);
 }
 
-/* Instances page */
+/* Profiles page */
 
-.instances-page {
+.profiles-page {
   gap: var(--space-5);
 }
 
-.instances-head {
+.profiles-head {
   width: 100%;
 }
 
@@ -936,14 +939,13 @@ checkbox:checked, radio:checked {
   text-color: var(--text-2);
 }
 
-.instances-status {
+.profiles-status {
   font-size: var(--font-sm);
   text-color: var(--text-2);
 }
 
-.instances-create,
-.instances-chosen,
-.instances-empty {
+.profiles-create,
+.profiles-empty {
   bg: var(--panel);
   border: 1 solid var(--line);
   radius: var(--radius-md);
@@ -956,7 +958,7 @@ checkbox:checked, radio:checked {
   text-color: var(--text-1);
 }
 
-.instances-list {
+.profiles-list {
   width: 100%;
 }
 
@@ -965,7 +967,7 @@ checkbox:checked, radio:checked {
   align-self: start;
 }
 
-.instance-card {
+.profile-card {
   bg: var(--panel);
   border: 1 solid var(--line);
   radius: var(--radius-md);
@@ -974,17 +976,16 @@ checkbox:checked, radio:checked {
   transition: border-color var(--dur-fast) var(--ease);
 }
 
-.instance-card:hover {
+.profile-card:hover {
   border-color: var(--line-strong);
 }
 
-.instance-name {
+.profile-name {
   font-size: var(--font-md);
   font-weight: 600;
 }
 
-.instance-version,
-.instance-memory {
+.profile-meta {
   font-size: var(--font-sm);
   text-color: var(--text-3);
 }
@@ -1000,13 +1001,28 @@ checkbox:checked, radio:checked {
   align-self: center;
 }
 
-.instance-detail,
-.instances-dialog {
+.profile-detail,
+.profiles-dialog {
   bg: var(--panel);
   border: 1 solid var(--line);
   radius: var(--radius-md);
   padding: var(--space-4);
   width: 100%;
+}
+
+.play-report {
+  font-size: var(--font-sm);
+  text-color: var(--text-2);
+}
+
+/* The Play dialog sits in the shell, over every page, so it takes a width of
+   its own rather than the page's. */
+.play-dialog {
+  bg: var(--surface-1);
+  border: 1 solid var(--line);
+  radius: var(--radius-md);
+  padding: var(--space-4);
+  width: 480;
 }
 
 .detail-title {
@@ -1017,6 +1033,29 @@ checkbox:checked, radio:checked {
 .detail-meta {
   font-size: var(--font-sm);
   text-color: var(--text-3);
+}
+
+/* A profile's mods, and the Modrinth search results under them. */
+
+.mod-list {
+  width: 100%;
+}
+
+.mod-row {
+  width: 100%;
+  padding: var(--space-2) var(--space-3);
+  radius: var(--radius-sm);
+  border: 1 solid var(--line-soft);
+}
+
+.mod-title {
+  font-size: var(--font-md);
+  font-weight: 600;
+}
+
+.mod-description {
+  font-size: var(--font-sm);
+  text-color: var(--text-2);
 }
 
 /* The game's own output. Monospace so a stack trace lines up, and a fixed

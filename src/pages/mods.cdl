@@ -1,0 +1,1006 @@
+import "lumen.cdl";
+
+// Mods: finding them on Modrinth, and getting a profile ready to play on one
+// game version.
+//
+// A profile lists mods by Modrinth project, with no version attached. Pressing
+// Play runs the steps below, each one waiting on the network before the next:
+//
+//   1. resolve   every mod, and every mod a chosen build lists as a required
+//                dependency, to its newest build for the game version and
+//                loader. A dependency that names an exact build gets that
+//                build.
+//   2. report    mods with no build for that version. A required one stops
+//                the launch; an optional one is left out, and the player is
+//                shown the list before the game starts. Two mods that declare
+//                each other incompatible stop the launch too.
+//   3. install   the game version itself, when it is not installed yet.
+//   4. loader    fetch the Fabric or Quilt launch profile for the version.
+//   5. download  the loader's libraries and every mod jar, checked against the
+//                sha1 Modrinth and the loader's maven publish.
+//   6. launch
+//
+// The resolve state is one JSON document in the `prep_doc` signal, parsed and
+// written back on every reply, the same way profiles.json is handled.
+
+fn mods_user_agent() -> string {
+    return "FizzWizzleDazzle/allay/0.1.0 (github.com/FizzWizzleDazzle/allay)";
+}
+
+fn mods_api() -> string {
+    return "https://api.modrinth.com/v2";
+}
+
+fn new_map() {
+    return as_map(lumen::parse_json("{}"));
+}
+
+fn new_list() {
+    return as_list(lumen::parse_json("[]"));
+}
+
+// Enough of percent-encoding for a query string: the characters that would
+// otherwise end or split a parameter. The HTTP client encodes the rest.
+fn url_encode(s: string) -> string {
+    return s.replace("%", "%25").replace(" ", "%20").replace("\"", "%22")
+        .replace("#", "%23").replace("&", "%26").replace("+", "%2B")
+        .replace(",", "%2C").replace("/", "%2F").replace(":", "%3A")
+        .replace("=", "%3D").replace("?", "%3F").replace("[", "%5B")
+        .replace("]", "%5D");
+}
+
+// A JSON array of strings, the shape Modrinth takes its list parameters in.
+fn json_strings(items) -> string {
+    let out = "[";
+    let first = true;
+    for item in items {
+        if first == false {
+            out = out + ",";
+        }
+        out = out + "\"" + as_str(item) + "\"";
+        first = false;
+    }
+    return out + "]";
+}
+
+fn mods_get(url: string, tag: string) -> bool {
+    let request = new_map();
+    map_put(request, "url", url);
+    map_put(request, "tag", tag);
+    map_put(request, "timeout_ms", 20000);
+    let headers = new_map();
+    map_put(headers, "User-Agent", mods_user_agent());
+    map_put(request, "headers", headers);
+    lumen::http(request);
+    return true;
+}
+
+fn mods_init() -> bool {
+    lumen::on("click", "mods-search", "mods_search_clicked");
+    lumen::on("click", "play-confirm", "mods_confirm_clicked");
+    lumen::on("click", "prof-stop", "mods_stop_clicked");
+    lumen::on("http", "allay-mr-search", "mods_on_search");
+    lumen::on("http", "allay-mr-titles", "mods_on_titles");
+    lumen::on("http", "allay-loader-list", "mods_on_loader_list");
+    lumen::on("http", "allay-loader-profile", "mods_on_loader_profile");
+    signal<string>("mods_query").set("");
+    signal<string>("mods_search_status").set("");
+    signal_array("mods_results").clear();
+    mods_prepare_reset();
+    return true;
+}
+
+// --- Search --------------------------------------------------------------------
+
+fn mods_profile_loader() -> string {
+    let pid = signal<string>("detail_id").get();
+    let d = profiles_read_doc();
+    let list = profiles_of(d);
+    let at = profiles_index_of(list, pid);
+    if at < 0 {
+        return "fabric";
+    }
+    let m = as_map(list[at]);
+    return as_str(m.get("loader"));
+}
+
+// Only mods that run on the client, for the profile's loader. A vanilla
+// profile searches Fabric mods, since adding one moves it to Fabric.
+fn mods_search_clicked(id: string) -> bool {
+    let raw = signal<string>("mods_query").get();
+    let query = raw.trim();
+    let loaders = "[\"categories:fabric\"]";
+    if mods_profile_loader() == "quilt" {
+        loaders = "[\"categories:fabric\",\"categories:quilt\"]";
+    }
+    let facets = "[[\"project_type:mod\"]," + loaders
+        + ",[\"client_side:required\",\"client_side:optional\"]]";
+    let url = mods_api() + "/search?limit=20&index=relevance&query=" + url_encode(query)
+        + "&facets=" + url_encode(facets);
+    signal<string>("mods_search_status").set("Searching Modrinth...");
+    return mods_get(url, "allay-mr-search");
+}
+
+fn mods_downloads_label(n: int) -> string {
+    if n >= 1000000 {
+        return str(n / 1000000) + "M downloads";
+    }
+    if n >= 1000 {
+        return str(n / 1000) + "k downloads";
+    }
+    return str(n) + " downloads";
+}
+
+fn mods_on_search(tag: string, response: any) -> bool {
+    let r = as_map(response);
+    if as_bool(r.get("ok")) == false {
+        signal<string>("mods_search_status").set("Modrinth could not be reached. "
+            + as_str(r.get("error")));
+        return false;
+    }
+    let parsed = lumen::parse_json(as_str(r.get("body")));
+    if is_map(parsed) == false {
+        signal<string>("mods_search_status").set("Modrinth sent something Allay could not read.");
+        return false;
+    }
+    let root = as_map(parsed);
+    let hits = as_list(root.get("hits"));
+    let rows = [];
+    for hit in hits {
+        let h = as_map(hit);
+        let project = as_str(h.get("project_id"));
+        let row = {
+            "id": project,
+            "slug": as_str(h.get("slug")),
+            "title": as_str(h.get("title")),
+            "author": "by " + as_str(h.get("author")),
+            "description": as_str(h.get("description")),
+            "downloads_label": mods_downloads_label(as_int(h.get("downloads")))
+        };
+        rows.push(row);
+        lumen::on("click", "modadd|" + project, "mods_add_clicked");
+    }
+    signal_array("mods_results").set(rows);
+    if rows.len() == 0 {
+        signal<string>("mods_search_status").set("Nothing found.");
+    } else {
+        signal<string>("mods_search_status").set("");
+    }
+    return true;
+}
+
+fn mods_add_clicked(id: string) -> bool {
+    let project = profiles_row_id(id);
+    let rows = as_list(signal_array("mods_results").all());
+    for item in rows {
+        let m = as_map(item);
+        if as_str(m.get("id")) == project {
+            return profiles_mod_add(project, as_str(m.get("slug")), as_str(m.get("title")));
+        }
+    }
+    return false;
+}
+
+// --- Prepare state ---------------------------------------------------------------
+
+fn mods_prepare_reset() -> bool {
+    signal<string>("prep_phase").set("");
+    signal<string>("prep_idle").set("1");
+    signal<string>("prep_confirm").set("");
+    signal<string>("prep_status").set("");
+    signal<string>("prep_report").set("");
+    signal<string>("prep_doc").set("");
+    signal<string>("prep_after_install").set("");
+    return true;
+}
+
+// True while a network step or a download is under way, when the dialog must
+// stay open so its outcome has somewhere to land.
+fn mods_prepare_busy() -> bool {
+    let phase = signal<string>("prep_phase").get();
+    return phase != "" && phase != "confirm" && phase != "failed";
+}
+
+fn mods_set_phase(phase: string, status: string) -> bool {
+    signal<string>("prep_phase").set(phase);
+    signal<string>("prep_status").set(status);
+    if phase == "" || phase == "failed" {
+        signal<string>("prep_idle").set("1");
+    } else {
+        signal<string>("prep_idle").set("");
+    }
+    if phase == "confirm" {
+        signal<string>("prep_confirm").set("1");
+    } else {
+        signal<string>("prep_confirm").set("");
+    }
+    return true;
+}
+
+fn mods_fail(message: string) -> bool {
+    mods_set_phase("failed", message);
+    signal<string>("status").set(message);
+    return false;
+}
+
+fn mods_read_doc() {
+    let parsed = lumen::parse_json(signal<string>("prep_doc").get());
+    if is_map(parsed) {
+        return as_map(parsed);
+    }
+    return new_map();
+}
+
+fn mods_write_doc(d) -> bool {
+    signal<string>("prep_doc").set(json_stringify(d));
+    return true;
+}
+
+fn mods_sub(d, key: string) {
+    return as_map(d.get(key));
+}
+
+// --- Starting ----------------------------------------------------------------------
+
+fn mods_prepare_start(pid: string, version: string) -> bool {
+    if mods_prepare_busy() {
+        return false;
+    }
+    if signal<string>("launch_running").get() != "" {
+        return mods_fail("A game is already running.");
+    }
+    if install_running() {
+        return mods_fail("Wait for the install on the versions page to finish.");
+    }
+    if install_is_installed(version) == false {
+        if install_lookup_url(version) == "" {
+            return mods_fail("Allay does not know a Minecraft version called " + version
+                + ". The versions page lists them all.");
+        }
+    }
+    let d = profiles_read_doc();
+    let list = profiles_of(d);
+    let at = profiles_index_of(list, pid);
+    if at < 0 {
+        return false;
+    }
+    let profile = as_map(list[at]);
+    let loader = as_str(profile.get("loader"));
+
+    let doc = new_map();
+    map_put(doc, "profile", pid);
+    map_put(doc, "version", version);
+    map_put(doc, "loader", loader);
+    map_put(doc, "memory", as_int(profile.get("memory_mb")));
+    map_put(doc, "seq", 0);
+    map_put(doc, "pending", 0);
+    map_put(doc, "error", "");
+    map_put(doc, "wants", new_map());
+    map_put(doc, "asked", new_map());
+    map_put(doc, "pins", new_map());
+    map_put(doc, "resolved", new_map());
+    map_put(doc, "missing", new_map());
+    map_put(doc, "incompatible", new_list());
+    map_put(doc, "titles", new_map());
+    map_put(doc, "final", new_list());
+    map_put(doc, "loader_id", "");
+
+    let top = new_map();
+    let mods = profiles_mods_of(profile);
+    for entry in mods {
+        let e = as_map(entry);
+        let project = as_str(e.get("id"));
+        map_put(top, project, mod_required(e));
+        map_put(mods_sub(doc, "titles"), project, as_str(e.get("title")));
+    }
+    map_put(doc, "top", top);
+    signal<string>("prep_report").set("");
+
+    if loader == "vanilla" || mods.len() == 0 {
+        mods_write_doc(doc);
+        return mods_run();
+    }
+
+    mods_set_phase("resolving", "Finding each mod's build for " + version + "...");
+    for entry in mods {
+        let e = as_map(entry);
+        mods_want(doc, as_str(e.get("id")), "", "");
+    }
+    mods_write_doc(doc);
+    return true;
+}
+
+// --- Resolving ---------------------------------------------------------------------
+
+// Ask Modrinth for one project's builds, or for one exact build when a
+// dependency names it. The reply comes back tagged with the request's number,
+// which keys the request's record in `wants`.
+fn mods_want(doc, project: string, pinned: string, by: string) -> bool {
+    let seq = as_int(doc.get("seq")) + 1;
+    map_put(doc, "seq", seq);
+    map_put(doc, "pending", as_int(doc.get("pending")) + 1);
+    let want = new_map();
+    map_put(want, "project", project);
+    map_put(want, "pinned", pinned);
+    map_put(want, "by", by);
+    map_put(mods_sub(doc, "wants"), str(seq), want);
+    map_put(mods_sub(doc, "asked"), project, true);
+
+    // Each request gets a tag of its own, so each gets its own route.
+    let tag = str(seq) + ":allay-mr-ver";
+    let url = "";
+    if pinned != "" {
+        tag = str(seq) + ":allay-mr-pin";
+        url = mods_api() + "/version/" + pinned;
+        lumen::on("http", tag, "mods_on_pinned");
+    } else {
+        lumen::on("http", tag, "mods_on_versions");
+        let loaders = ["fabric"];
+        if as_str(doc.get("loader")) == "quilt" {
+            loaders = ["quilt", "fabric"];
+        }
+        let versions = [as_str(doc.get("version"))];
+        url = mods_api() + "/project/" + project + "/version?game_versions="
+            + url_encode(json_strings(versions)) + "&loaders=" + url_encode(json_strings(loaders));
+    }
+    return mods_get(url, tag);
+}
+
+fn mods_tag_seq(tag: string) -> string {
+    let cut = tag.find(":");
+    return tag[..cut];
+}
+
+fn mods_list_has(items, value: string) -> bool {
+    for item in items {
+        if as_str(item) == value {
+            return true;
+        }
+    }
+    return false;
+}
+
+// Whether one build runs on this profile's loader. Quilt runs Fabric mods.
+fn mods_build_fits(v, doc) -> bool {
+    let loaders = as_list(v.get("loaders"));
+    if mods_list_has(loaders, "fabric") {
+        return true;
+    }
+    return as_str(doc.get("loader")) == "quilt" && mods_list_has(loaders, "quilt");
+}
+
+// Modrinth lists builds newest first, and the newest wins whether it is marked
+// release or beta: mods pin each other's current builds, so an older release
+// next to a newer build of its dependency is the combination that breaks. On
+// Quilt the newest build made for Quilt wins, then the newest made for Fabric.
+fn mods_pick(builds, doc) {
+    let quilt = as_str(doc.get("loader")) == "quilt";
+    let fallback = null;
+    for item in builds {
+        let v = as_map(item);
+        if mods_build_fits(v, doc) == false {
+            continue;
+        }
+        if quilt == false || mods_list_has(as_list(v.get("loaders")), "quilt") {
+            return v;
+        }
+        if is_null(fallback) {
+            fallback = v;
+        }
+    }
+    return fallback;
+}
+
+fn mods_on_versions(tag: string, response: any) -> bool {
+    let doc = mods_read_doc();
+    if doc.contains("wants") == false {
+        return false;
+    }
+    let want = as_map(mods_sub(doc, "wants").get(mods_tag_seq(tag)));
+    let project = as_str(want.get("project"));
+    let r = as_map(response);
+    if as_bool(r.get("ok")) == false {
+        if as_int(r.get("status")) == 404 {
+            map_put(mods_sub(doc, "missing"), project, "is no longer on Modrinth");
+        } else {
+            map_put(doc, "error", "Modrinth could not be reached. " + as_str(r.get("error")));
+        }
+        return mods_settle(doc);
+    }
+    let parsed = lumen::parse_json(as_str(r.get("body")));
+    let picked = null;
+    if is_list(parsed) {
+        picked = mods_pick(as_list(parsed), doc);
+    }
+    if is_null(picked) {
+        map_put(mods_sub(doc, "missing"), project, "has no build for "
+            + as_str(doc.get("version")));
+        return mods_settle(doc);
+    }
+    mods_accept(doc, project, as_map(picked), false);
+    return mods_settle(doc);
+}
+
+// A dependency that names one exact build gets that build, as long as it is
+// made for this game version and loader.
+fn mods_on_pinned(tag: string, response: any) -> bool {
+    let doc = mods_read_doc();
+    if doc.contains("wants") == false {
+        return false;
+    }
+    let want = as_map(mods_sub(doc, "wants").get(mods_tag_seq(tag)));
+    let project = as_str(want.get("project"));
+    let r = as_map(response);
+    if as_bool(r.get("ok")) == false {
+        map_put(doc, "error", "Modrinth could not be reached. " + as_str(r.get("error")));
+        return mods_settle(doc);
+    }
+    let parsed = lumen::parse_json(as_str(r.get("body")));
+    if is_map(parsed) == false {
+        map_put(doc, "error", "Modrinth sent something Allay could not read.");
+        return mods_settle(doc);
+    }
+    let v = as_map(parsed);
+    if project == "" {
+        project = as_str(v.get("project_id"));
+    }
+    let versions = as_list(v.get("game_versions"));
+    if mods_list_has(versions, as_str(doc.get("version"))) == false
+        || mods_build_fits(v, doc) == false {
+        map_put(mods_sub(doc, "missing"), project, "has no build for "
+            + as_str(doc.get("version")));
+        return mods_settle(doc);
+    }
+    mods_accept(doc, project, v, true);
+    return mods_settle(doc);
+}
+
+// Record a chosen build and queue what it depends on. A build a dependency
+// pins replaces one chosen by date; two pins on different builds keep the
+// first.
+fn mods_accept(doc, project: string, v, pinned: bool) -> bool {
+    let resolved = mods_sub(doc, "resolved");
+    if resolved.contains(project) {
+        let had = as_map(resolved.get(project));
+        if as_bool(had.get("pinned")) || pinned == false {
+            return false;
+        }
+    }
+    let files = as_list(v.get("files"));
+    if files.len() == 0 {
+        map_put(mods_sub(doc, "missing"), project, "has a build with no file in it");
+        return false;
+    }
+    let file = as_map(files[0]);
+    for item in files {
+        let f = as_map(item);
+        if as_bool(f.get("primary")) {
+            file = f;
+        }
+    }
+    let hashes = as_map(file.get("hashes"));
+
+    let entry = new_map();
+    map_put(entry, "version_id", as_str(v.get("id")));
+    map_put(entry, "version_number", as_str(v.get("version_number")));
+    map_put(entry, "file", as_str(file.get("filename")));
+    map_put(entry, "url", as_str(file.get("url")));
+    map_put(entry, "sha1", as_str(hashes.get("sha1")));
+    map_put(entry, "pinned", pinned);
+    let deps = new_list();
+
+    let dependencies = as_list(v.get("dependencies"));
+    for item in dependencies {
+        let dep = as_map(item);
+        let kind = as_str(dep.get("dependency_type"));
+        let dep_project = "";
+        if is_str(dep.get("project_id")) {
+            dep_project = as_str(dep.get("project_id"));
+        }
+        let dep_version = "";
+        if is_str(dep.get("version_id")) {
+            dep_version = as_str(dep.get("version_id"));
+        }
+        if kind == "incompatible" && dep_project != "" {
+            let pair = new_list();
+            pair.push(dep_project);
+            pair.push(project);
+            let incompatible = as_list(doc.get("incompatible"));
+            incompatible.push(pair);
+            map_put(doc, "incompatible", incompatible);
+        }
+        if kind != "required" {
+            continue;
+        }
+        if dep_project == "" && dep_version == "" {
+            continue;
+        }
+        if dep_project != "" {
+            deps.push(dep_project);
+        }
+        // A pin is asked for even when the project is already on its way
+        // unpinned, since its reply may not be in yet; the pinned build
+        // replaces the unpinned one whichever lands first.
+        let asked = mods_sub(doc, "asked");
+        let pins = mods_sub(doc, "pins");
+        if dep_version != "" {
+            if pins.contains(dep_version) == false {
+                map_put(pins, dep_version, true);
+                mods_want(doc, dep_project, dep_version, project);
+            }
+        } else if asked.contains(dep_project) == false {
+            mods_want(doc, dep_project, "", project);
+        }
+    }
+    map_put(entry, "deps", deps);
+    map_put(resolved, project, entry);
+    return true;
+}
+
+// One reply is in. When it was the last one, work out what can run.
+fn mods_settle(doc) -> bool {
+    map_put(doc, "pending", as_int(doc.get("pending")) - 1);
+    mods_write_doc(doc);
+    if as_int(doc.get("pending")) > 0 {
+        return true;
+    }
+    let error = as_str(doc.get("error"));
+    if error != "" {
+        return mods_fail(error);
+    }
+    // One more request fetches the names of the dependencies and anything to
+    // report, which the builds do not carry.
+    let ids = new_list();
+    let titles = mods_sub(doc, "titles");
+    for project in mods_sub(doc, "resolved").keys() {
+        if titles.contains(project) == false {
+            ids.push(project);
+        }
+    }
+    for project in mods_sub(doc, "missing").keys() {
+        if titles.contains(project) == false {
+            ids.push(project);
+        }
+    }
+    for item in as_list(doc.get("incompatible")) {
+        let pair = as_list(item);
+        let project = as_str(pair[0]);
+        if titles.contains(project) == false {
+            ids.push(project);
+        }
+    }
+    if ids.len() == 0 {
+        return mods_decide();
+    }
+    signal<string>("prep_status").set("Reading mod names...");
+    return mods_get(mods_api() + "/projects?ids=" + url_encode(json_strings(ids)),
+        "allay-mr-titles");
+}
+
+fn mods_on_titles(tag: string, response: any) -> bool {
+    let doc = mods_read_doc();
+    let r = as_map(response);
+    if as_bool(r.get("ok")) {
+        let parsed = lumen::parse_json(as_str(r.get("body")));
+        if is_list(parsed) {
+            let titles = mods_sub(doc, "titles");
+            for item in as_list(parsed) {
+                let p = as_map(item);
+                map_put(titles, as_str(p.get("id")), as_str(p.get("title")));
+            }
+            mods_write_doc(doc);
+        }
+    }
+    return mods_decide();
+}
+
+fn mods_title(doc, project: string) -> string {
+    let titles = mods_sub(doc, "titles");
+    if titles.contains(project) {
+        return as_str(titles.get(project));
+    }
+    return project;
+}
+
+fn mods_join(items, sep: string) -> string {
+    let out = "";
+    let first = true;
+    for item in items {
+        if first == false {
+            out = out + sep;
+        }
+        out = out + as_str(item);
+        first = false;
+    }
+    return out;
+}
+
+// Decide what runs. A mod is broken when something it requires has no build,
+// or is broken itself; the game gets every top-level mod that is not broken,
+// plus what those require.
+fn mods_decide() -> bool {
+    let doc = mods_read_doc();
+    let version = as_str(doc.get("version"));
+    let resolved = mods_sub(doc, "resolved");
+    let missing = mods_sub(doc, "missing");
+    let top = mods_sub(doc, "top");
+
+    let broken = new_map();
+    let changed = true;
+    while changed {
+        changed = false;
+        for project in resolved.keys() {
+            if broken.contains(project) {
+                continue;
+            }
+            let entry = as_map(resolved.get(project));
+            for dep in as_list(entry.get("deps")) {
+                let dp = as_str(dep);
+                let gone = missing.contains(dp) && resolved.contains(dp) == false;
+                if gone || broken.contains(dp) {
+                    map_put(broken, project, dp);
+                    changed = true;
+                    break;
+                }
+            }
+        }
+    }
+
+    // Walk from the top-level mods that can run.
+    let chosen = new_map();
+    let stack = new_list();
+    for project in top.keys() {
+        if resolved.contains(project) && broken.contains(project) == false {
+            stack.push(project);
+        }
+    }
+    while stack.len() > 0 {
+        let project = as_str(stack[stack.len() - 1]);
+        stack.remove(stack.len() - 1);
+        if chosen.contains(project) {
+            continue;
+        }
+        map_put(chosen, project, true);
+        let entry = as_map(resolved.get(project));
+        for dep in as_list(entry.get("deps")) {
+            let dp = as_str(dep);
+            if resolved.contains(dp) {
+                stack.push(dp);
+            }
+        }
+    }
+
+    let blocked = new_list();
+    let skipped = new_list();
+    for project in top.keys() {
+        if chosen.contains(project) {
+            continue;
+        }
+        let reason = "";
+        if missing.contains(project) {
+            reason = as_str(missing.get(project));
+        } else if broken.contains(project) {
+            let cause = as_str(broken.get(project));
+            reason = "needs " + mods_title(doc, cause) + ", which ";
+            if missing.contains(cause) {
+                reason = reason + as_str(missing.get(cause));
+            } else {
+                reason = reason + "cannot run on " + version + " either";
+            }
+        } else {
+            reason = "could not be resolved";
+        }
+        let line = mods_title(doc, project) + " " + reason;
+        if as_bool(top.get(project)) {
+            blocked.push(line);
+        } else {
+            skipped.push(line);
+        }
+    }
+    for item in as_list(doc.get("incompatible")) {
+        let pair = as_list(item);
+        let a = as_str(pair[0]);
+        let b = as_str(pair[1]);
+        if chosen.contains(a) && chosen.contains(b) {
+            blocked.push(mods_title(doc, b) + " does not work together with "
+                + mods_title(doc, a) + ". Remove one of them from the profile.");
+        }
+    }
+
+    let final = new_list();
+    let extra = new_list();
+    for project in chosen.keys() {
+        let entry = as_map(resolved.get(project));
+        let f = new_map();
+        map_put(f, "project", project);
+        map_put(f, "title", mods_title(doc, project));
+        map_put(f, "file", as_str(entry.get("file")));
+        map_put(f, "url", as_str(entry.get("url")));
+        map_put(f, "sha1", as_str(entry.get("sha1")));
+        final.push(f);
+        if top.contains(project) == false {
+            extra.push(mods_title(doc, project));
+        }
+    }
+    map_put(doc, "final", final);
+    mods_write_doc(doc);
+
+    let report = "";
+    if extra.len() > 0 {
+        report = "Also installs what these mods need: " + mods_join(extra, ", ") + ".";
+    }
+    if blocked.len() > 0 {
+        let text = "The game cannot start on " + version + ":\n- " + mods_join(blocked, "\n- ");
+        if skipped.len() > 0 {
+            text = text + "\n\nThese would be left out:\n- " + mods_join(skipped, "\n- ");
+        }
+        signal<string>("prep_report").set(text);
+        return mods_fail("Change the version, or the profile's mods, and try again.");
+    }
+    if skipped.len() > 0 {
+        let text = "These mods are left out on " + version + ":\n- " + mods_join(skipped, "\n- ");
+        if report != "" {
+            text = text + "\n\n" + report;
+        }
+        signal<string>("prep_report").set(text);
+        return mods_set_phase("confirm", "Play without them, or pick another version.");
+    }
+    signal<string>("prep_report").set(report);
+    return mods_run();
+}
+
+fn mods_confirm_clicked(id: string) -> bool {
+    if signal<string>("prep_phase").get() != "confirm" {
+        return false;
+    }
+    return mods_run();
+}
+
+// --- Installing, the loader, and the files ---------------------------------------------
+
+fn mods_run() -> bool {
+    let doc = mods_read_doc();
+    let version = as_str(doc.get("version"));
+    if install_is_installed(version) == false {
+        mods_set_phase("installing", "Installing " + version + "...");
+        signal<string>("prep_after_install").set(version);
+        if install_start(version) == false {
+            signal<string>("prep_after_install").set("");
+            return mods_fail("Installing " + version + " did not start: "
+                + signal<string>("install_status").get());
+        }
+        return true;
+    }
+    return mods_loader();
+}
+
+// install.cdl calls this once an install started from here is over.
+fn mods_after_install(ok: bool) -> bool {
+    signal<string>("prep_after_install").set("");
+    if ok == false {
+        return mods_fail(signal<string>("install_status").get());
+    }
+    return mods_loader();
+}
+
+fn mods_loader_meta(loader: string) -> string {
+    if loader == "quilt" {
+        return "https://meta.quiltmc.org/v3/versions/loader";
+    }
+    return "https://meta.fabricmc.net/v2/versions/loader";
+}
+
+fn mods_loader() -> bool {
+    let doc = mods_read_doc();
+    let loader = as_str(doc.get("loader"));
+    if loader == "vanilla" {
+        return mods_fetch_files();
+    }
+    mods_set_phase("loader", "Looking up the newest " + profiles_loader_label(loader) + "...");
+    return mods_get(mods_loader_meta(loader), "allay-loader-list");
+}
+
+// A loader profile already on disk for this game version, for when the loader's
+// servers cannot be reached.
+fn mods_loader_on_disk(loader: string, version: string) -> string {
+    let found = "";
+    let names = files::list(loaders_dir());
+    for name in names {
+        if name.starts_with(loader + "-loader-") && name.ends_with("-" + version + ".json") {
+            found = name[..name.len() - 5];
+        }
+    }
+    return found;
+}
+
+// Fabric marks its stable loaders; Quilt lists betas with a "-beta" suffix.
+// Both list the newest first.
+fn mods_on_loader_list(tag: string, response: any) -> bool {
+    let doc = mods_read_doc();
+    let loader = as_str(doc.get("loader"));
+    let version = as_str(doc.get("version"));
+    let r = as_map(response);
+    let picked = "";
+    if as_bool(r.get("ok")) {
+        let parsed = lumen::parse_json(as_str(r.get("body")));
+        if is_list(parsed) {
+            for item in as_list(parsed) {
+                let m = as_map(item);
+                let v = as_str(m.get("version"));
+                let stable = v.contains("-") == false;
+                if m.contains("stable") {
+                    stable = as_bool(m.get("stable"));
+                }
+                if stable {
+                    picked = v;
+                    break;
+                }
+            }
+        }
+    }
+    if picked == "" {
+        let cached = mods_loader_on_disk(loader, version);
+        if cached == "" {
+            return mods_fail(profiles_loader_label(loader) + " could not be reached. "
+                + as_str(r.get("error")));
+        }
+        map_put(doc, "loader_id", cached);
+        mods_write_doc(doc);
+        return mods_fetch_files();
+    }
+    let loader_id = loader + "-loader-" + picked + "-" + version;
+    map_put(doc, "loader_id", loader_id);
+    mods_write_doc(doc);
+    if files::exists(loaders_dir() + "/" + loader_id + ".json") {
+        return mods_fetch_files();
+    }
+    let url = mods_loader_meta(loader) + "/" + version + "/" + picked + "/profile/json";
+    return mods_get(url, "allay-loader-profile");
+}
+
+fn mods_on_loader_profile(tag: string, response: any) -> bool {
+    let doc = mods_read_doc();
+    let loader = as_str(doc.get("loader"));
+    let version = as_str(doc.get("version"));
+    let r = as_map(response);
+    if as_bool(r.get("ok")) == false {
+        if as_int(r.get("status")) >= 400 && as_int(r.get("status")) < 500 {
+            return mods_fail(profiles_loader_label(loader) + " does not run on " + version + " yet.");
+        }
+        return mods_fail(profiles_loader_label(loader) + " could not be reached. "
+            + as_str(r.get("error")));
+    }
+    let body = as_str(r.get("body"));
+    let parsed = lumen::parse_json(body);
+    if is_map(parsed) == false || as_map(parsed).contains("mainClass") == false {
+        return mods_fail(profiles_loader_label(loader) + " sent a launch profile Allay could not read.");
+    }
+    files::write(loaders_dir() + "/" + as_str(doc.get("loader_id")) + ".json", body);
+    return mods_fetch_files();
+}
+
+// The path a maven coordinate lives at, group:artifact:version[:classifier].
+fn maven_path(name: string) -> string {
+    let parts = name.split(":");
+    if parts.len() < 3 {
+        return "";
+    }
+    let group = as_str(parts[0]).replace(".", "/");
+    let artifact = as_str(parts[1]);
+    let version = as_str(parts[2]);
+    let file = artifact + "-" + version;
+    if parts.len() > 3 {
+        file = file + "-" + as_str(parts[3]);
+    }
+    return group + "/" + artifact + "/" + version + "/" + file + ".jar";
+}
+
+fn mods_manifest_path(game_dir: string) -> string {
+    return game_dir + "/allay-mods.json";
+}
+
+// Queue the loader's libraries and the mod jars. Jars Allay put in the mods
+// folder on an earlier run and that this run does not want are removed; a jar
+// Allay did not put there is left alone.
+fn mods_fetch_files() -> bool {
+    let doc = mods_read_doc();
+    let pid = as_str(doc.get("profile"));
+    let version = as_str(doc.get("version"));
+    let game_dir = profiles_game_dir(pid, version);
+    files::mkdir(game_dir);
+    let rows = [];
+
+    let loader_id = as_str(doc.get("loader_id"));
+    if loader_id != "" {
+        let parsed = lumen::parse_json(files::read(loaders_dir() + "/" + loader_id + ".json"));
+        if is_map(parsed) == false {
+            return mods_fail("The saved " + loader_id + " launch profile could not be read.");
+        }
+        let root = as_map(parsed);
+        for item in as_list(root.get("libraries")) {
+            let lib = as_map(item);
+            let path = maven_path(as_str(lib.get("name")));
+            if path == "" {
+                continue;
+            }
+            let base = as_str(lib.get("url"));
+            if base == "" {
+                base = "https://maven.fabricmc.net/";
+            }
+            if base.ends_with("/") == false {
+                base = base + "/";
+            }
+            let sha1 = "";
+            if lib.contains("sha1") {
+                sha1 = as_str(lib.get("sha1"));
+            }
+            install_queue_add(rows, base + path, libraries_dir() + "/" + path, "loader", sha1);
+        }
+    }
+
+    if as_str(doc.get("loader")) != "vanilla" {
+        let mods_dir = game_dir + "/mods";
+        files::mkdir(mods_dir);
+        let wanted = new_list();
+        for item in as_list(doc.get("final")) {
+            let f = as_map(item);
+            wanted.push(as_str(f.get("file")));
+        }
+        let old = lumen::parse_json(files::read(mods_manifest_path(game_dir)));
+        if is_map(old) {
+            let placed = as_list(as_map(old).get("files"));
+            for name in placed {
+                let n = as_str(name);
+                if mods_list_has(wanted, n) == false {
+                    files::remove(mods_dir + "/" + n);
+                }
+            }
+        }
+        let manifest = new_map();
+        map_put(manifest, "files", wanted);
+        files::write(mods_manifest_path(game_dir), json_stringify(manifest));
+
+        for item in as_list(doc.get("final")) {
+            let f = as_map(item);
+            let path = mods_dir + "/" + as_str(f.get("file"));
+            let sha1 = as_str(f.get("sha1"));
+            if files::exists(path) && files::digest(path, "sha1") != sha1 {
+                files::remove(path);
+            }
+            install_queue_add(rows, as_str(f.get("url")), path, "mod", sha1);
+        }
+    }
+
+    mods_set_phase("downloading", "Downloading " + str(rows.len()) + " files...");
+    return queue_run(rows, "prepare");
+}
+
+// install.cdl calls this when the queue this file started has drained.
+fn mods_after_downloads(failed: int) -> bool {
+    if failed > 0 {
+        return mods_fail(str(failed) + " files did not download. Press Play again to retry "
+            + "the ones that are missing. " + signal<string>("install_error").get());
+    }
+    let doc = mods_read_doc();
+    let pid = as_str(doc.get("profile"));
+    let version = as_str(doc.get("version"));
+    mods_set_phase("launching", "Starting the game...");
+    let started = launch_start(pid, version, as_str(doc.get("loader_id")),
+        as_int(doc.get("memory")), profiles_game_dir(pid, version));
+    if started == false {
+        return mods_fail(signal<string>("status").get());
+    }
+    profiles_record_version(pid, version);
+    mods_prepare_reset();
+    signal<string>("play_open").set("");
+    return true;
+}
+
+fn mods_stop_clicked(id: string) -> bool {
+    let pid = signal<string>("launch_running").get();
+    if pid == "" {
+        return false;
+    }
+    process::stop("game:" + pid);
+    return true;
+}

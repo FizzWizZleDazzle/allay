@@ -1,0 +1,895 @@
+import "lumen.cdl";
+import "std/time";
+
+// Profiles: the list, the create flow, the per-profile detail panel, and the
+// Play dialog on the profiles page.
+//
+// A profile is a name, a loader, and a list of mods. It is not tied to a game
+// version: the version is picked at Play, and each mod resolves to its build
+// for that version when the game starts (mods.cdl). Every game version a
+// profile is played on gets its own game directory inside the profile, so
+// worlds and configs never cross versions.
+//
+// The profile set is kept as one JSON document. `profiles_doc` holds its text,
+// `profiles.json` in the app's data directory holds the same text on disk, and
+// the `profiles` array signal holds a decorated copy the <for> in profiles.lmn
+// renders. Every mutation walks the same path: parse the document, change it,
+// write it back, refresh the rows.
+//
+// Every handler is bound to one element id through lumen::on, so this file
+// defines no global on_click / on_text_input and no on_ready: the app-wide
+// on_ready calls profiles_init() once.
+
+// A map read out of parse_json is typed `any`, so calling insert straight on
+// one resolves the list overload; passing it through an untyped parameter
+// picks the map one.
+fn map_put(m, k, v) {
+    m.insert(k, v);
+}
+
+// --- Storage -----------------------------------------------------------------
+
+fn profiles_empty_doc() -> string {
+    return "{\"version\":2,\"next_seq\":1,\"profiles\":[]}";
+}
+
+fn profiles_doc_text() -> string {
+    let text = signal<string>("profiles_doc").get();
+    if text == "" {
+        return profiles_empty_doc();
+    }
+    return text;
+}
+
+fn profiles_read_doc() {
+    let text = profiles_doc_text();
+    let parsed = lumen::parse_json(text);
+    if is_null(parsed) {
+        let fresh = profiles_empty_doc();
+        let seeded = lumen::parse_json(fresh);
+        return as_map(seeded);
+    }
+    return as_map(parsed);
+}
+
+fn profiles_of(d) {
+    let raw = d.get("profiles");
+    if is_null(raw) {
+        return [];
+    }
+    return as_list(raw);
+}
+
+fn profiles_mods_of(m) {
+    if m.contains("mods") == false {
+        return [];
+    }
+    let raw = m.get("mods");
+    if is_null(raw) {
+        return [];
+    }
+    return as_list(raw);
+}
+
+fn profiles_persist(d) -> bool {
+    let text = json_stringify(d);
+    signal<string>("profiles_doc").set(text);
+    let path = profiles_path();
+    let ok = files::write(path, text);
+    if !ok {
+        signal<string>("profiles_status").set("Could not write " + path);
+    }
+    return ok;
+}
+
+// The game directory for one profile on one game version.
+fn profiles_game_dir(pid: string, version: string) -> string {
+    return profiles_dir() + "/" + pid + "/" + version;
+}
+
+// --- Carrying instances over ---------------------------------------------------
+
+// Before profiles, Allay kept instances: one game version each, with one game
+// directory. Each becomes a profile with no mods, and its game directory moves
+// to the per-version directory for the version it was made for. The old file
+// goes only once every directory has been carried over.
+fn profiles_migrate() -> bool {
+    if files::exists(profiles_path()) {
+        return false;
+    }
+    let raw = files::read(legacy_instances_path());
+    if raw.trim() == "" {
+        return false;
+    }
+    let parsed = lumen::parse_json(raw);
+    if is_map(parsed) == false {
+        return false;
+    }
+    let old = as_map(parsed);
+    let d = profiles_read_doc();
+    map_put(d, "next_seq", as_int(old.get("next_seq")));
+    let list = profiles_of(d);
+    let moved_all = true;
+    let items = as_list(old.get("instances"));
+    for item in items {
+        let m = as_map(item);
+        let id = as_str(m.get("id"));
+        let version = as_str(m.get("game_version"));
+        map_put(m, "mods", []);
+        let loader = as_str(m.get("loader"));
+        if loader == "" {
+            map_put(m, "loader", "vanilla");
+        }
+        list.push(m);
+        let from = legacy_instances_dir() + "/" + id;
+        if files::exists(from) {
+            if copy_tree(from, profiles_game_dir(id, version)) {
+                remove_tree(from);
+            } else {
+                moved_all = false;
+            }
+        }
+    }
+    if profiles_persist(d) == false {
+        return false;
+    }
+    if moved_all {
+        files::remove(legacy_instances_path());
+        // Anything left in the old directory belonged to no instance, so it
+        // stays where it is.
+        if files::list(legacy_instances_dir()).len() == 0 {
+            files::remove(legacy_instances_dir());
+        }
+    }
+    return true;
+}
+
+// files::copy takes one file, so a tree is copied file by file, walking a list
+// of directories rather than recursing (see remove_tree).
+fn copy_tree(from: string, to: string) -> bool {
+    if files::is_dir(from) == false {
+        return files::copy(from, to);
+    }
+    let sources = [from];
+    let targets = [to];
+    let ok = true;
+    let at = 0;
+    while at < sources.len() {
+        let src = sources[at];
+        let dst = targets[at];
+        at = at + 1;
+        files::mkdir(dst);
+        let names = files::list(src);
+        for name in names {
+            if files::is_dir(src + "/" + name) {
+                sources.push(src + "/" + name);
+                targets.push(dst + "/" + name);
+            } else if files::copy(src + "/" + name, dst + "/" + name) == false {
+                ok = false;
+            }
+        }
+    }
+    return ok;
+}
+
+// --- Row rendering -----------------------------------------------------------
+
+fn profiles_loader_label(loader: string) -> string {
+    if loader == "fabric" {
+        return "Fabric";
+    }
+    if loader == "quilt" {
+        return "Quilt";
+    }
+    return "Vanilla";
+}
+
+fn profiles_loader_from_label(label: string) -> string {
+    if label == "Fabric" {
+        return "fabric";
+    }
+    if label == "Quilt" {
+        return "quilt";
+    }
+    return "vanilla";
+}
+
+fn profiles_count_label(n: int, one: string, many: string) -> string {
+    if n == 0 {
+        return "no " + many;
+    }
+    if n == 1 {
+        return "1 " + one;
+    }
+    return str(n) + " " + many;
+}
+
+fn profiles_decorate(m) -> bool {
+    let mb = as_int(m.get("memory_mb"));
+    let label = "memory unset";
+    if mb > 0 {
+        label = str(mb) + " MB";
+    }
+    map_put(m, "memory_label", label);
+    let loader = as_str(m.get("loader"));
+    map_put(m, "loader_label", profiles_loader_label(loader));
+    let mods = profiles_mods_of(m);
+    map_put(m, "mods_label", profiles_count_label(mods.len(), "mod", "mods"));
+    let version = as_str(m.get("game_version"));
+    if version == "" {
+        map_put(m, "version_label", "not played yet");
+    } else {
+        map_put(m, "version_label", "last on " + version);
+    }
+    return true;
+}
+
+// A keyed <for> keeps a row whose key it has seen before and does not read
+// its new fields (lumen-fx/lumen#407), so every write gives the rows fresh
+// keys and they are all rebuilt.
+fn profiles_row_key(id: string) -> string {
+    let rev = signal<int>("rows_rev").get() + 1;
+    signal<int>("rows_rev").set(rev);
+    return id + "@" + str(rev);
+}
+
+fn profiles_refresh(d) -> bool {
+    let list = profiles_of(d);
+    let text = json_stringify(list);
+    let copy = lumen::parse_json(text);
+    let rows = as_list(copy);
+    let i = 0;
+    while i < rows.len() {
+        let m = as_map(rows[i]);
+        profiles_decorate(m);
+        map_put(m, "key", profiles_row_key(as_str(m.get("id"))));
+        i = i + 1;
+    }
+    signal_array("profiles").set(rows);
+    profiles_bind_rows(rows);
+
+    let n = rows.len();
+    if n == 0 {
+        signal<string>("profiles_empty").set("1");
+        signal<string>("profiles_count_label").set("No profiles yet");
+    } else {
+        signal<string>("profiles_empty").set("");
+        if n == 1 {
+            signal<string>("profiles_count_label").set("1 profile");
+        } else {
+            signal<string>("profiles_count_label").set(str(n) + " profiles");
+        }
+    }
+    home_refresh();
+    return true;
+}
+
+// A row's buttons carry the ids "play|<id>", "open|<id>" and so on. Routing is
+// keyed by id string, so a row spawned later only needs its ids registered
+// once, here, after the array signal is written.
+fn profiles_bind_rows(rows) -> bool {
+    let i = 0;
+    while i < rows.len() {
+        let m = as_map(rows[i]);
+        let id = as_str(m.get("id"));
+        lumen::on("click", "play|" + id, "profiles_play_clicked");
+        lumen::on("click", "open|" + id, "profiles_open_clicked");
+        lumen::on("click", "ren|" + id, "profiles_rename_clicked");
+        lumen::on("click", "dup|" + id, "profiles_duplicate_clicked");
+        lumen::on("click", "del|" + id, "profiles_delete_clicked");
+        i = i + 1;
+    }
+    return true;
+}
+
+// --- Lookup helpers ----------------------------------------------------------
+
+fn profiles_row_id(id: string) -> string {
+    let cut = id.find("|");
+    if cut < 0 {
+        return "";
+    }
+    return id[cut + 1..id.len()];
+}
+
+fn profiles_index_of(list, id: string) -> int {
+    let i = 0;
+    while i < list.len() {
+        let m = as_map(list[i]);
+        if as_str(m.get("id")) == id {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+fn profiles_name_of(list, id: string) -> string {
+    let at = profiles_index_of(list, id);
+    if at < 0 {
+        return "";
+    }
+    let m = as_map(list[at]);
+    return as_str(m.get("name"));
+}
+
+// --- Create ------------------------------------------------------------------
+
+fn profiles_record_text(id: string, name: string, loader: string) -> string {
+    let clean = name.replace("\\", "/").replace("\"", "'");
+    return "{\"id\":\"" + id + "\",\"name\":\"" + clean + "\",\"game_version\":\"\""
+        + ",\"loader\":\"" + loader + "\",\"memory_mb\":2048,\"notes\":\"\",\"mods\":[]"
+        + ",\"created\":\"" + format(now(), "%Y-%m-%d %H:%M") + "\",\"last_played\":\"\"}";
+}
+
+fn profiles_create_open(id: string) -> bool {
+    signal<string>("create_open").set("1");
+    signal<string>("profiles_status").set("");
+    return true;
+}
+
+fn profiles_create_cancel(id: string) -> bool {
+    signal<string>("create_open").set("");
+    signal<string>("new_name").set("");
+    return true;
+}
+
+fn profiles_create_confirm(id: string) -> bool {
+    let name = signal<string>("new_name").get();
+    let wanted = name.trim();
+    if wanted == "" {
+        signal<string>("profiles_status").set("Give the profile a name.");
+        return false;
+    }
+    let loader = profiles_loader_from_label(signal<string>("new_loader").get());
+
+    let d = profiles_read_doc();
+    let seq = as_int(d.get("next_seq"));
+    let new_id = "profile-" + str(seq);
+    map_put(d, "next_seq", seq + 1);
+
+    let text = profiles_record_text(new_id, wanted, loader);
+    let parsed = lumen::parse_json(text);
+    let record = as_map(parsed);
+    let list = profiles_of(d);
+    list.push(record);
+
+    profiles_persist(d);
+    profiles_refresh(d);
+    signal<string>("create_open").set("");
+    signal<string>("new_name").set("");
+    signal<string>("profiles_status").set("Created " + wanted + ".");
+    profiles_show_detail(new_id);
+    return true;
+}
+
+// --- Play --------------------------------------------------------------------
+
+// Play asks which game version to run. The field starts at the version the
+// versions page picked, else the one this profile last ran, else the latest
+// release.
+fn profiles_play_clicked(id: string) -> bool {
+    let pid = profiles_row_id(id);
+    let d = profiles_read_doc();
+    let list = profiles_of(d);
+    let at = profiles_index_of(list, pid);
+    if at < 0 {
+        return false;
+    }
+    let m = as_map(list[at]);
+    let version = signal<string>("versions_chosen").get();
+    if version == "" {
+        version = as_str(m.get("game_version"));
+    }
+    if version == "" {
+        version = signal<string>("versions_latest_release").get();
+    }
+    signal<string>("play_profile").set(pid);
+    signal<string>("play_title").set("Play " + as_str(m.get("name")));
+    signal<string>("play_version").set(version);
+    let loader = as_str(m.get("loader"));
+    let hint = "The game runs without a mod loader.";
+    if loader != "vanilla" {
+        hint = "Each mod is fetched in its build for this version, with "
+            + profiles_loader_label(loader) + ".";
+    }
+    signal<string>("play_hint").set(hint);
+    mods_prepare_reset();
+    signal<string>("play_open").set("1");
+    return true;
+}
+
+// The home page plays straight away, on the version the profile last ran.
+fn profiles_play_last(pid: string) -> bool {
+    let d = profiles_read_doc();
+    let list = profiles_of(d);
+    let at = profiles_index_of(list, pid);
+    if at < 0 {
+        return false;
+    }
+    let m = as_map(list[at]);
+    let version = as_str(m.get("game_version"));
+    if version == "" {
+        return profiles_play_clicked("play|" + pid);
+    }
+    signal<string>("play_profile").set(pid);
+    signal<string>("play_title").set("Play " + as_str(m.get("name")));
+    signal<string>("play_version").set(version);
+    signal<string>("play_hint").set("");
+    mods_prepare_reset();
+    signal<string>("play_open").set("1");
+    return mods_prepare_start(pid, version);
+}
+
+fn profiles_play_latest(id: string) -> bool {
+    signal<string>("play_version").set(signal<string>("versions_latest_release").get());
+    return true;
+}
+
+fn profiles_play_cancel(id: string) -> bool {
+    if mods_prepare_busy() {
+        signal<string>("prep_status").set("Wait for the downloads under way to finish.");
+        return false;
+    }
+    signal<string>("play_open").set("");
+    mods_prepare_reset();
+    return true;
+}
+
+fn profiles_play_go(id: string) -> bool {
+    let pid = signal<string>("play_profile").get();
+    let raw = signal<string>("play_version").get();
+    let version = raw.trim();
+    if version == "" {
+        signal<string>("prep_status").set("Pick a game version, or type one in.");
+        return false;
+    }
+    return mods_prepare_start(pid, version);
+}
+
+// Called when the game starts, so the row remembers the version it ran.
+fn profiles_record_version(pid: string, version: string) -> bool {
+    let d = profiles_read_doc();
+    let list = profiles_of(d);
+    let at = profiles_index_of(list, pid);
+    if at < 0 {
+        return false;
+    }
+    let m = as_map(list[at]);
+    map_put(m, "game_version", version);
+    profiles_persist(d);
+    profiles_refresh(d);
+    return true;
+}
+
+// Called when the game exits, so the row shows when it was last played.
+fn profiles_record_played(pid: string) -> bool {
+    if pid == "" {
+        return false;
+    }
+    let d = profiles_read_doc();
+    let list = profiles_of(d);
+    let at = profiles_index_of(list, pid);
+    if at < 0 {
+        return false;
+    }
+    let m = as_map(list[at]);
+    map_put(m, "last_played", format(now(), "%Y-%m-%d %H:%M"));
+    profiles_persist(d);
+    profiles_refresh(d);
+    if signal<string>("detail_id").get() == pid {
+        profiles_show_detail(pid);
+    }
+    return true;
+}
+
+// --- Detail panel ------------------------------------------------------------
+
+fn profiles_show_detail(pid: string) -> bool {
+    let d = profiles_read_doc();
+    let list = profiles_of(d);
+    let at = profiles_index_of(list, pid);
+    if at < 0 {
+        return false;
+    }
+    let m = as_map(list[at]);
+    signal<string>("detail_id").set(pid);
+    signal<string>("detail_name").set(as_str(m.get("name")));
+    let loader = as_str(m.get("loader"));
+    let mods = profiles_mods_of(m);
+    signal<string>("detail_summary").set(profiles_loader_label(loader) + " - "
+        + profiles_count_label(mods.len(), "mod", "mods"));
+    signal<string>("detail_loader").set(profiles_loader_label(loader));
+    let mb = as_int(m.get("memory_mb"));
+    signal<string>("detail_memory").set(str(mb));
+    signal<string>("detail_notes").set(as_str(m.get("notes")));
+
+    let created = as_str(m.get("created"));
+    if created == "" {
+        signal<string>("detail_created_label").set("Created: not recorded");
+    } else {
+        signal<string>("detail_created_label").set("Created: " + created);
+    }
+    let played = as_str(m.get("last_played"));
+    if played == "" {
+        signal<string>("detail_played_label").set("Last played: never");
+    } else {
+        signal<string>("detail_played_label").set("Last played: " + played);
+    }
+
+    // One game directory per version this profile has been played on.
+    let dirs = [];
+    if files::exists(profiles_dir() + "/" + pid) {
+        dirs = files::list(profiles_dir() + "/" + pid);
+    }
+    if dirs.len() == 0 {
+        signal<string>("detail_dirs_label").set("Game folders: none yet");
+    } else {
+        signal<string>("detail_dirs_label").set("Game folders: " + dirs.join(", "));
+    }
+
+    profiles_show_mods(m);
+    signal<string>("detail_open").set("1");
+    return true;
+}
+
+fn profiles_open_clicked(id: string) -> bool {
+    let pid = profiles_row_id(id);
+    return profiles_show_detail(pid);
+}
+
+fn profiles_detail_close(id: string) -> bool {
+    signal<string>("detail_open").set("");
+    signal<string>("detail_id").set("");
+    return true;
+}
+
+fn profiles_detail_save(id: string) -> bool {
+    let pid = signal<string>("detail_id").get();
+    if pid == "" {
+        return false;
+    }
+    // int() only runs once is_int() has said the text is a number.
+    let memory_text = signal<string>("detail_memory").get();
+    let trimmed = memory_text.trim();
+    let numeric = trimmed.is_int();
+    if !numeric {
+        signal<string>("profiles_status").set("Memory must be a whole number of megabytes.");
+        return false;
+    }
+    let mb = int(trimmed);
+    let too_small = mb < 256;
+    if too_small {
+        signal<string>("profiles_status").set("Give the profile at least 256 MB.");
+        return false;
+    }
+    let notes = signal<string>("detail_notes").get();
+    let loader = profiles_loader_from_label(signal<string>("detail_loader").get());
+
+    let d = profiles_read_doc();
+    let list = profiles_of(d);
+    let at = profiles_index_of(list, pid);
+    if at < 0 {
+        return false;
+    }
+    let m = as_map(list[at]);
+    map_put(m, "memory_mb", mb);
+    map_put(m, "notes", notes);
+    map_put(m, "loader", loader);
+
+    profiles_persist(d);
+    profiles_refresh(d);
+    let name = as_str(m.get("name"));
+    signal<string>("profiles_status").set("Saved " + name + ".");
+    profiles_show_detail(pid);
+    return true;
+}
+
+// --- The mod list --------------------------------------------------------------
+
+// Each mod row carries "modreq|<project>" and "modrm|<project>" buttons.
+fn profiles_show_mods(m) -> bool {
+    let mods = profiles_mods_of(m);
+    let rows = [];
+    for entry in mods {
+        let e = as_map(entry);
+        let project = as_str(e.get("id"));
+        let label = "Optional";
+        if mod_required(e) {
+            label = "Required";
+        }
+        let row = {"id": project, "key": profiles_row_key(project),
+                   "title": as_str(e.get("title")), "required_label": label};
+        rows.push(row);
+        lumen::on("click", "modreq|" + project, "profiles_mod_toggle_required");
+        lumen::on("click", "modrm|" + project, "profiles_mod_remove");
+    }
+    signal_array("detail_mods").set(rows);
+    if mods.len() == 0 {
+        signal<string>("detail_mods_empty").set("1");
+    } else {
+        signal<string>("detail_mods_empty").set("");
+    }
+    return true;
+}
+
+// A mod entry written by hand may leave `required` out; that means optional.
+fn mod_required(e) -> bool {
+    if e.contains("required") {
+        return as_bool(e.get("required"));
+    }
+    return false;
+}
+
+fn profiles_mod_index(mods, project: string) -> int {
+    let i = 0;
+    while i < mods.len() {
+        let e = as_map(mods[i]);
+        if as_str(e.get("id")) == project {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// Adding a mod to a vanilla profile moves it to Fabric, since a mod needs a
+// loader to run. Quilt stays Quilt.
+fn profiles_mod_add(project: string, slug: string, title: string) -> bool {
+    let pid = signal<string>("detail_id").get();
+    if pid == "" {
+        return false;
+    }
+    let d = profiles_read_doc();
+    let list = profiles_of(d);
+    let at = profiles_index_of(list, pid);
+    if at < 0 {
+        return false;
+    }
+    let m = as_map(list[at]);
+    let mods = profiles_mods_of(m);
+    if profiles_mod_index(mods, project) >= 0 {
+        signal<string>("mods_status").set(title + " is already in this profile.");
+        return false;
+    }
+    let entry = {"id": project, "slug": slug, "title": title};
+    let record = as_map(lumen::parse_json(json_stringify(entry)));
+    map_put(record, "required", false);
+    mods.push(record);
+    map_put(m, "mods", mods);
+    let note = "";
+    if as_str(m.get("loader")) == "vanilla" {
+        map_put(m, "loader", "fabric");
+        note = " The profile now uses Fabric, which mods need.";
+    }
+    profiles_persist(d);
+    profiles_refresh(d);
+    profiles_show_detail(pid);
+    signal<string>("mods_status").set("Added " + title + "." + note);
+    return true;
+}
+
+fn profiles_mod_edit(id: string, remove: bool) -> bool {
+    let project = profiles_row_id(id);
+    let pid = signal<string>("detail_id").get();
+    let d = profiles_read_doc();
+    let list = profiles_of(d);
+    let at = profiles_index_of(list, pid);
+    if at < 0 {
+        return false;
+    }
+    let m = as_map(list[at]);
+    let mods = profiles_mods_of(m);
+    let i = profiles_mod_index(mods, project);
+    if i < 0 {
+        return false;
+    }
+    let e = as_map(mods[i]);
+    let title = as_str(e.get("title"));
+    if remove {
+        mods.remove(i);
+        signal<string>("mods_status").set("Removed " + title + ".");
+    } else {
+        let required = mod_required(e) == false;
+        map_put(e, "required", required);
+        if required {
+            signal<string>("mods_status").set(title + " is required: on a version it has "
+                + "no build for, the game does not start.");
+        } else {
+            signal<string>("mods_status").set(title + " is optional: on a version it has "
+                + "no build for, the game starts without it.");
+        }
+    }
+    map_put(m, "mods", mods);
+    profiles_persist(d);
+    profiles_refresh(d);
+    profiles_show_detail(pid);
+    return true;
+}
+
+fn profiles_mod_toggle_required(id: string) -> bool {
+    return profiles_mod_edit(id, false);
+}
+
+fn profiles_mod_remove(id: string) -> bool {
+    return profiles_mod_edit(id, true);
+}
+
+// --- Rename ------------------------------------------------------------------
+
+fn profiles_rename_clicked(id: string) -> bool {
+    let pid = profiles_row_id(id);
+    let d = profiles_read_doc();
+    let list = profiles_of(d);
+    let name = profiles_name_of(list, pid);
+    if name == "" {
+        return false;
+    }
+    signal<string>("rename_id").set(pid);
+    signal<string>("rename_value").set(name);
+    signal<string>("rename_open").set("1");
+    return true;
+}
+
+fn profiles_rename_cancel(id: string) -> bool {
+    signal<string>("rename_open").set("");
+    signal<string>("rename_id").set("");
+    return true;
+}
+
+fn profiles_rename_ok(id: string) -> bool {
+    let pid = signal<string>("rename_id").get();
+    if pid == "" {
+        return false;
+    }
+    let raw = signal<string>("rename_value").get();
+    let name = raw.trim();
+    if name == "" {
+        signal<string>("profiles_status").set("A profile needs a name.");
+        return false;
+    }
+    let open_id = signal<string>("detail_id").get();
+
+    let d = profiles_read_doc();
+    let list = profiles_of(d);
+    let at = profiles_index_of(list, pid);
+    if at < 0 {
+        return false;
+    }
+    let m = as_map(list[at]);
+    map_put(m, "name", name);
+
+    profiles_persist(d);
+    profiles_refresh(d);
+    signal<string>("rename_open").set("");
+    signal<string>("rename_id").set("");
+    signal<string>("profiles_status").set("Renamed to " + name + ".");
+    if open_id == pid {
+        profiles_show_detail(pid);
+    }
+    return true;
+}
+
+// --- Duplicate ---------------------------------------------------------------
+
+// The copy takes the mod list and settings, not the game directories: its
+// worlds start empty.
+fn profiles_duplicate_clicked(id: string) -> bool {
+    let pid = profiles_row_id(id);
+    let d = profiles_read_doc();
+    let list = profiles_of(d);
+    let at = profiles_index_of(list, pid);
+    if at < 0 {
+        return false;
+    }
+    let source = as_map(list[at]);
+    let text = json_stringify(source);
+    let parsed = lumen::parse_json(text);
+    let copy = as_map(parsed);
+
+    let seq = as_int(d.get("next_seq"));
+    let new_id = "profile-" + str(seq);
+    map_put(d, "next_seq", seq + 1);
+    map_put(copy, "id", new_id);
+    let name = as_str(source.get("name"));
+    map_put(copy, "name", name + " copy");
+    map_put(copy, "last_played", "");
+    list.push(copy);
+
+    profiles_persist(d);
+    profiles_refresh(d);
+    signal<string>("profiles_status").set("Duplicated " + name + ".");
+    return true;
+}
+
+// --- Delete ------------------------------------------------------------------
+
+fn profiles_delete_clicked(id: string) -> bool {
+    let pid = profiles_row_id(id);
+    let d = profiles_read_doc();
+    let list = profiles_of(d);
+    let name = profiles_name_of(list, pid);
+    if name == "" {
+        return false;
+    }
+    signal<string>("confirm_id").set(pid);
+    signal<string>("confirm_text").set("Delete " + name
+        + "? This removes it from the launcher. Its worlds stay on disk in "
+        + profiles_dir() + "/" + pid + ".");
+    signal<string>("confirm_open").set("1");
+    return true;
+}
+
+fn profiles_delete_cancel(id: string) -> bool {
+    signal<string>("confirm_open").set("");
+    signal<string>("confirm_id").set("");
+    return true;
+}
+
+fn profiles_delete_ok(id: string) -> bool {
+    let pid = signal<string>("confirm_id").get();
+    if pid == "" {
+        return false;
+    }
+    let open_id = signal<string>("detail_id").get();
+
+    let d = profiles_read_doc();
+    let list = profiles_of(d);
+    let at = profiles_index_of(list, pid);
+    if at < 0 {
+        return false;
+    }
+    let m = as_map(list[at]);
+    let name = as_str(m.get("name"));
+    list.remove(at);
+
+    profiles_persist(d);
+    profiles_refresh(d);
+    signal<string>("confirm_open").set("");
+    signal<string>("confirm_id").set("");
+    signal<string>("profiles_status").set("Deleted " + name + ".");
+    if open_id == pid {
+        signal<string>("detail_open").set("");
+        signal<string>("detail_id").set("");
+    }
+    return true;
+}
+
+// --- Start up ----------------------------------------------------------------
+
+// Seam for the app shell: whichever page owns on_ready calls this once.
+fn profiles_init() -> bool {
+    lumen::on("click", "prof-create-open", "profiles_create_open");
+    lumen::on("click", "prof-create-cancel", "profiles_create_cancel");
+    lumen::on("click", "prof-create-confirm", "profiles_create_confirm");
+    lumen::on("click", "prof-detail-close", "profiles_detail_close");
+    lumen::on("click", "prof-detail-save", "profiles_detail_save");
+    lumen::on("click", "prof-rename-cancel", "profiles_rename_cancel");
+    lumen::on("click", "prof-rename-ok", "profiles_rename_ok");
+    lumen::on("click", "prof-delete-cancel", "profiles_delete_cancel");
+    lumen::on("click", "prof-delete-ok", "profiles_delete_ok");
+    lumen::on("click", "play-latest", "profiles_play_latest");
+    lumen::on("click", "play-cancel", "profiles_play_cancel");
+    lumen::on("click", "play-go", "profiles_play_go");
+
+    signal<string>("profiles_status").set("");
+    signal<string>("create_open").set("");
+    signal<string>("detail_open").set("");
+    signal<string>("detail_id").set("");
+    signal<string>("rename_open").set("");
+    signal<string>("rename_id").set("");
+    signal<string>("confirm_open").set("");
+    signal<string>("confirm_id").set("");
+    signal<string>("new_name").set("");
+    signal<string>("new_loader").set("Vanilla");
+    signal<string>("play_open").set("");
+    signal<string>("mods_status").set("");
+
+    signal<string>("profiles_doc").set(files::read(profiles_path()));
+    profiles_migrate();
+
+    let d = profiles_read_doc();
+    profiles_refresh(d);
+    mods_init();
+    return true;
+}
