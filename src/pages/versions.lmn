@@ -1,11 +1,12 @@
 <root class="app">
   <use template="shell" active="versions">
-  <column class="versions page" gap="12" padding="16">
+  <column class="versions page" gap="12">
     <row class="versions-head" align="center" gap="12">
-      <label style="headline-md" text="Minecraft versions"/>
-      <spacer/>
-      <label class="versions-status" bind-text="$versions_status"/>
-      <button id="versions-refresh" text="Refresh"/>
+      <column gap="2" grow="1">
+        <label class="page-title" text="Versions"/>
+        <label class="page-sub" bind-text="$versions_status" text=""/>
+      </column>
+      <button id="versions-refresh" class="btn" text="Refresh"/>
     </row>
 
     <row class="versions-latest" gap="12">

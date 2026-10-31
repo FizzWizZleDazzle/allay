@@ -238,6 +238,9 @@ scroll {
 
 .statusbar {
   height: 30;
+  /* A long page makes the body want more than the window has; the status
+     bar keeps its height and the body gives up the difference. */
+  shrink: 0;
   padding: 0 var(--space-4);
   bg: var(--panel-strong);
   border-top: 1 solid var(--line-soft);
