@@ -1006,7 +1006,8 @@ checkbox:checked, radio:checked {
 
 .profile-detail,
 .profiles-dialog {
-  bg: var(--panel);
+  /* Opaque, so the buttons of the row underneath do not show through. */
+  bg: var(--surface-1);
   border: 1 solid var(--line);
   radius: var(--radius-md);
   padding: var(--space-4);
