@@ -1,4 +1,5 @@
 import "lumen.cdl";
+import "std/json";
 
 // Mods: finding them on Modrinth, and getting a profile ready to play on one
 // game version.
@@ -49,7 +50,7 @@ fn json_strings(items) -> string {
         if first == false {
             out = out + ",";
         }
-        out = out + "\"" + as_str(item) + "\"";
+        out = out + "\"" + (item as string) + "\"";
         first = false;
     }
     return out + "]";
@@ -88,8 +89,8 @@ fn mods_profile_loader() -> string {
     if at < 0 {
         return "fabric";
     }
-    let m = as_map(list[at]);
-    return as_str(m.get("loader"));
+    let m = list[at] as {string: any};
+    return m["loader"] as string;
 }
 
 // Only mods that run on the client, for the profile's loader. A vanilla
@@ -111,39 +112,39 @@ fn mods_search_clicked(id: string) -> bool {
 
 fn mods_downloads_label(n: int) -> string {
     if n >= 1000000 {
-        return str(n / 1000000) + "M downloads";
+        return string(n / 1000000) + "M downloads";
     }
     if n >= 1000 {
-        return str(n / 1000) + "k downloads";
+        return string(n / 1000) + "k downloads";
     }
-    return str(n) + " downloads";
+    return string(n) + " downloads";
 }
 
 fn mods_on_search(tag: string, response: any) -> bool {
-    let r = as_map(response);
-    if as_bool(r.get("ok")) == false {
+    let r = response as {string: any};
+    if (r["ok"] as bool) == false {
         signal<string>("mods_search_status").set("Modrinth could not be reached. "
-            + as_str(r.get("error")));
+            + (r["error"] as string));
         return false;
     }
-    let parsed = lumen::parse_json(as_str(r.get("body")));
-    if is_map(parsed) == false {
+    let parsed = lumen::parse_json(r["body"] as string);
+    if (parsed is {string: any}) == false {
         signal<string>("mods_search_status").set("Modrinth sent something Allay could not read.");
         return false;
     }
-    let root = as_map(parsed);
-    let hits = as_list(root.get("hits"));
+    let root = parsed as {string: any};
+    let hits = root["hits"] as any[];
     let rows = [];
     for hit in hits {
-        let h = as_map(hit);
-        let project = as_str(h.get("project_id"));
+        let h = hit as {string: any};
+        let project = h["project_id"] as string;
         let row = {
             "id": project,
-            "slug": as_str(h.get("slug")),
-            "title": as_str(h.get("title")),
-            "author": "by " + as_str(h.get("author")),
-            "description": as_str(h.get("description")),
-            "downloads_label": mods_downloads_label(as_int(h.get("downloads")))
+            "slug": h["slug"] as string,
+            "title": h["title"] as string,
+            "author": "by " + (h["author"] as string),
+            "description": h["description"] as string,
+            "downloads_label": mods_downloads_label(h["downloads"] as int)
         };
         rows.push(row);
         lumen::on("click", "modadd|" + project, "mods_add_clicked");
@@ -159,11 +160,11 @@ fn mods_on_search(tag: string, response: any) -> bool {
 
 fn mods_add_clicked(id: string) -> bool {
     let project = profiles_row_id(id);
-    let rows = as_list(signal_array("mods_results").all());
+    let rows = signal_array("mods_results").all() as any[];
     for item in rows {
-        let m = as_map(item);
-        if as_str(m.get("id")) == project {
-            return profiles_mod_add(project, as_str(m.get("slug")), as_str(m.get("title")));
+        let m = item as {string: any};
+        if (m["id"] as string) == project {
+            return profiles_mod_add(project, m["slug"] as string, m["title"] as string);
         }
     }
     return false;
@@ -213,19 +214,19 @@ fn mods_fail(message: string) -> bool {
 
 fn mods_read_doc() {
     let parsed = lumen::parse_json(signal<string>("prep_doc").get());
-    if is_map(parsed) {
-        return as_map(parsed);
+    if parsed is {string: any} {
+        return parsed as {string: any};
     }
     return new_map();
 }
 
 fn mods_write_doc(d) -> bool {
-    signal<string>("prep_doc").set(json_stringify(d));
+    signal<string>("prep_doc").set(json::stringify(d));
     return true;
 }
 
 fn mods_sub(d, key: string) {
-    return as_map(d.get(key));
+    return d[key] as {string: any};
 }
 
 // --- Starting ----------------------------------------------------------------------
@@ -252,36 +253,36 @@ fn mods_prepare_start(pid: string, version: string) -> bool {
     if at < 0 {
         return false;
     }
-    let profile = as_map(list[at]);
-    let loader = as_str(profile.get("loader"));
+    let profile = list[at] as {string: any};
+    let loader = profile["loader"] as string;
 
     let doc = new_map();
-    doc.insert("profile", pid);
-    doc.insert("version", version);
-    doc.insert("loader", loader);
-    doc.insert("memory", as_int(profile.get("memory_mb")));
-    doc.insert("seq", 0);
-    doc.insert("pending", 0);
-    doc.insert("error", "");
-    doc.insert("wants", new_map());
-    doc.insert("asked", new_map());
-    doc.insert("pins", new_map());
-    doc.insert("resolved", new_map());
-    doc.insert("missing", new_map());
-    doc.insert("incompatible", new_list());
-    doc.insert("titles", new_map());
-    doc.insert("final", new_list());
-    doc.insert("loader_id", "");
+    doc["profile"] = pid;
+    doc["version"] = version;
+    doc["loader"] = loader;
+    doc["memory"] = (profile["memory_mb"] as int);
+    doc["seq"] = 0;
+    doc["pending"] = 0;
+    doc["error"] = "";
+    doc["wants"] = new_map();
+    doc["asked"] = new_map();
+    doc["pins"] = new_map();
+    doc["resolved"] = new_map();
+    doc["missing"] = new_map();
+    doc["incompatible"] = new_list();
+    doc["titles"] = new_map();
+    doc["final"] = new_list();
+    doc["loader_id"] = "";
 
     let top = new_map();
     let mods = profiles_mods_of(profile);
     for entry in mods {
-        let e = as_map(entry);
-        let project = as_str(e.get("id"));
-        top.insert(project, mod_required(e));
-        mods_sub(doc, "titles").insert(project, as_str(e.get("title")));
+        let e = entry as {string: any};
+        let project = e["id"] as string;
+        top[project] = mod_required(e);
+        mods_sub(doc, "titles")[project] = (e["title"] as string);
     }
-    doc.insert("top", top);
+    doc["top"] = top;
     signal<string>("prep_report").set("");
 
     if loader == "vanilla" || mods.len() == 0 {
@@ -291,8 +292,8 @@ fn mods_prepare_start(pid: string, version: string) -> bool {
 
     mods_set_phase("resolving", "Finding each mod's build for " + version + "...");
     for entry in mods {
-        let e = as_map(entry);
-        mods_want(doc, as_str(e.get("id")), "", "");
+        let e = entry as {string: any};
+        mods_want(doc, e["id"] as string, "", "");
     }
     mods_write_doc(doc);
     return true;
@@ -304,30 +305,30 @@ fn mods_prepare_start(pid: string, version: string) -> bool {
 // dependency names it. The reply comes back tagged with the request's number,
 // which keys the request's record in `wants`.
 fn mods_want(doc, project: string, pinned: string, by: string) -> bool {
-    let seq = as_int(doc.get("seq")) + 1;
-    doc.insert("seq", seq);
-    doc.insert("pending", as_int(doc.get("pending")) + 1);
+    let seq = (doc["seq"] as int) + 1;
+    doc["seq"] = seq;
+    doc["pending"] = (doc["pending"] as int) + 1;
     let want = new_map();
-    want.insert("project", project);
-    want.insert("pinned", pinned);
-    want.insert("by", by);
-    mods_sub(doc, "wants").insert(str(seq), want);
-    mods_sub(doc, "asked").insert(project, true);
+    want["project"] = project;
+    want["pinned"] = pinned;
+    want["by"] = by;
+    mods_sub(doc, "wants")[string(seq)] = want;
+    mods_sub(doc, "asked")[project] = true;
 
     // Each request gets a tag of its own, so each gets its own route.
-    let tag = str(seq) + ":allay-mr-ver";
+    let tag = string(seq) + ":allay-mr-ver";
     let url = "";
     if pinned != "" {
-        tag = str(seq) + ":allay-mr-pin";
+        tag = string(seq) + ":allay-mr-pin";
         url = mods_api() + "/version/" + pinned;
         lumen::on("http", tag, "mods_on_pinned");
     } else {
         lumen::on("http", tag, "mods_on_versions");
         let loaders = ["fabric"];
-        if as_str(doc.get("loader")) == "quilt" {
+        if (doc["loader"] as string) == "quilt" {
             loaders = ["quilt", "fabric"];
         }
-        let versions = [as_str(doc.get("version"))];
+        let versions = [doc["version"] as string];
         url = mods_api() + "/project/" + project + "/version?game_versions="
             + url_encode(json_strings(versions)) + "&loaders=" + url_encode(json_strings(loaders));
     }
@@ -335,13 +336,13 @@ fn mods_want(doc, project: string, pinned: string, by: string) -> bool {
 }
 
 fn mods_tag_seq(tag: string) -> string {
-    let cut = tag.find(":");
+    let cut = tag.index_of(":").unwrap_or(-1);
     return tag[..cut];
 }
 
 fn mods_list_has(items, value: string) -> bool {
     for item in items {
-        if as_str(item) == value {
+        if (item as string) == value {
             return true;
         }
     }
@@ -350,11 +351,11 @@ fn mods_list_has(items, value: string) -> bool {
 
 // Whether one build runs on this profile's loader. Quilt runs Fabric mods.
 fn mods_build_fits(v, doc) -> bool {
-    let loaders = as_list(v.get("loaders"));
+    let loaders = v["loaders"] as any[];
     if mods_list_has(loaders, "fabric") {
         return true;
     }
-    return as_str(doc.get("loader")) == "quilt" && mods_list_has(loaders, "quilt");
+    return (doc["loader"] as string) == "quilt" && mods_list_has(loaders, "quilt");
 }
 
 // Modrinth lists builds newest first, and the newest wins whether it is marked
@@ -362,17 +363,17 @@ fn mods_build_fits(v, doc) -> bool {
 // next to a newer build of its dependency is the combination that breaks. On
 // Quilt the newest build made for Quilt wins, then the newest made for Fabric.
 fn mods_pick(builds, doc) {
-    let quilt = as_str(doc.get("loader")) == "quilt";
+    let quilt = (doc["loader"] as string) == "quilt";
     let fallback = null;
     for item in builds {
-        let v = as_map(item);
+        let v = item as {string: any};
         if mods_build_fits(v, doc) == false {
             continue;
         }
-        if quilt == false || mods_list_has(as_list(v.get("loaders")), "quilt") {
+        if quilt == false || mods_list_has(v["loaders"] as any[], "quilt") {
             return v;
         }
-        if is_null(fallback) {
+        if fallback == null {
             fallback = v;
         }
     }
@@ -384,28 +385,28 @@ fn mods_on_versions(tag: string, response: any) -> bool {
     if doc.contains("wants") == false {
         return false;
     }
-    let want = as_map(mods_sub(doc, "wants").get(mods_tag_seq(tag)));
-    let project = as_str(want.get("project"));
-    let r = as_map(response);
-    if as_bool(r.get("ok")) == false {
-        if as_int(r.get("status")) == 404 {
-            mods_sub(doc, "missing").insert(project, "is no longer on Modrinth");
+    let want = mods_sub(doc, "wants")[mods_tag_seq(tag)] as {string: any};
+    let project = want["project"] as string;
+    let r = response as {string: any};
+    if (r["ok"] as bool) == false {
+        if (r["status"] as int) == 404 {
+            mods_sub(doc, "missing")[project] = "is no longer on Modrinth";
         } else {
-            doc.insert("error", "Modrinth could not be reached. " + as_str(r.get("error")));
+            doc["error"] = "Modrinth could not be reached. " + (r["error"] as string);
         }
         return mods_settle(doc);
     }
-    let parsed = lumen::parse_json(as_str(r.get("body")));
+    let parsed = lumen::parse_json(r["body"] as string);
     let picked = null;
-    if is_list(parsed) {
-        picked = mods_pick(as_list(parsed), doc);
+    if parsed is any[] {
+        picked = mods_pick(parsed as any[], doc);
     }
-    if is_null(picked) {
-        mods_sub(doc, "missing").insert(project, "has no build for "
-            + as_str(doc.get("version")));
+    if picked == null {
+        mods_sub(doc, "missing")[project] = "has no build for "
+            + (doc["version"] as string);
         return mods_settle(doc);
     }
-    mods_accept(doc, project, as_map(picked), false);
+    mods_accept(doc, project, picked as {string: any}, false);
     return mods_settle(doc);
 }
 
@@ -416,27 +417,27 @@ fn mods_on_pinned(tag: string, response: any) -> bool {
     if doc.contains("wants") == false {
         return false;
     }
-    let want = as_map(mods_sub(doc, "wants").get(mods_tag_seq(tag)));
-    let project = as_str(want.get("project"));
-    let r = as_map(response);
-    if as_bool(r.get("ok")) == false {
-        doc.insert("error", "Modrinth could not be reached. " + as_str(r.get("error")));
+    let want = mods_sub(doc, "wants")[mods_tag_seq(tag)] as {string: any};
+    let project = want["project"] as string;
+    let r = response as {string: any};
+    if (r["ok"] as bool) == false {
+        doc["error"] = "Modrinth could not be reached. " + (r["error"] as string);
         return mods_settle(doc);
     }
-    let parsed = lumen::parse_json(as_str(r.get("body")));
-    if is_map(parsed) == false {
-        doc.insert("error", "Modrinth sent something Allay could not read.");
+    let parsed = lumen::parse_json(r["body"] as string);
+    if (parsed is {string: any}) == false {
+        doc["error"] = "Modrinth sent something Allay could not read.";
         return mods_settle(doc);
     }
-    let v = as_map(parsed);
+    let v = parsed as {string: any};
     if project == "" {
-        project = as_str(v.get("project_id"));
+        project = v["project_id"] as string;
     }
-    let versions = as_list(v.get("game_versions"));
-    if mods_list_has(versions, as_str(doc.get("version"))) == false
+    let versions = v["game_versions"] as any[];
+    if mods_list_has(versions, doc["version"] as string) == false
         || mods_build_fits(v, doc) == false {
-        mods_sub(doc, "missing").insert(project, "has no build for "
-            + as_str(doc.get("version")));
+        mods_sub(doc, "missing")[project] = "has no build for "
+            + (doc["version"] as string);
         return mods_settle(doc);
     }
     mods_accept(doc, project, v, true);
@@ -449,53 +450,53 @@ fn mods_on_pinned(tag: string, response: any) -> bool {
 fn mods_accept(doc, project: string, v, pinned: bool) -> bool {
     let resolved = mods_sub(doc, "resolved");
     if resolved.contains(project) {
-        let had = as_map(resolved.get(project));
-        if as_bool(had.get("pinned")) || pinned == false {
+        let had = resolved[project] as {string: any};
+        if (had["pinned"] as bool) || pinned == false {
             return false;
         }
     }
-    let files = as_list(v.get("files"));
+    let files = v["files"] as any[];
     if files.len() == 0 {
-        mods_sub(doc, "missing").insert(project, "has a build with no file in it");
+        mods_sub(doc, "missing")[project] = "has a build with no file in it";
         return false;
     }
-    let file = as_map(files[0]);
+    let file = files[0] as {string: any};
     for item in files {
-        let f = as_map(item);
-        if as_bool(f.get("primary")) {
+        let f = item as {string: any};
+        if f["primary"] as bool {
             file = f;
         }
     }
-    let hashes = as_map(file.get("hashes"));
+    let hashes = file["hashes"] as {string: any};
 
     let entry = new_map();
-    entry.insert("version_id", as_str(v.get("id")));
-    entry.insert("version_number", as_str(v.get("version_number")));
-    entry.insert("file", as_str(file.get("filename")));
-    entry.insert("url", as_str(file.get("url")));
-    entry.insert("sha1", as_str(hashes.get("sha1")));
-    entry.insert("pinned", pinned);
+    entry["version_id"] = (v["id"] as string);
+    entry["version_number"] = (v["version_number"] as string);
+    entry["file"] = (file["filename"] as string);
+    entry["url"] = (file["url"] as string);
+    entry["sha1"] = (hashes["sha1"] as string);
+    entry["pinned"] = pinned;
     let deps = new_list();
 
-    let dependencies = as_list(v.get("dependencies"));
+    let dependencies = v["dependencies"] as any[];
     for item in dependencies {
-        let dep = as_map(item);
-        let kind = as_str(dep.get("dependency_type"));
+        let dep = item as {string: any};
+        let kind = dep["dependency_type"] as string;
         let dep_project = "";
-        if is_str(dep.get("project_id")) {
-            dep_project = as_str(dep.get("project_id"));
+        if dep["project_id"] is string {
+            dep_project = dep["project_id"] as string;
         }
         let dep_version = "";
-        if is_str(dep.get("version_id")) {
-            dep_version = as_str(dep.get("version_id"));
+        if dep["version_id"] is string {
+            dep_version = dep["version_id"] as string;
         }
         if kind == "incompatible" && dep_project != "" {
             let pair = new_list();
             pair.push(dep_project);
             pair.push(project);
-            let incompatible = as_list(doc.get("incompatible"));
+            let incompatible = doc["incompatible"] as any[];
             incompatible.push(pair);
-            doc.insert("incompatible", incompatible);
+            doc["incompatible"] = incompatible;
         }
         if kind != "required" {
             continue;
@@ -513,26 +514,26 @@ fn mods_accept(doc, project: string, v, pinned: bool) -> bool {
         let pins = mods_sub(doc, "pins");
         if dep_version != "" {
             if pins.contains(dep_version) == false {
-                pins.insert(dep_version, true);
+                pins[dep_version] = true;
                 mods_want(doc, dep_project, dep_version, project);
             }
         } else if asked.contains(dep_project) == false {
             mods_want(doc, dep_project, "", project);
         }
     }
-    entry.insert("deps", deps);
-    resolved.insert(project, entry);
+    entry["deps"] = deps;
+    resolved[project] = entry;
     return true;
 }
 
 // One reply is in. When it was the last one, work out what can run.
 fn mods_settle(doc) -> bool {
-    doc.insert("pending", as_int(doc.get("pending")) - 1);
+    doc["pending"] = (doc["pending"] as int) - 1;
     mods_write_doc(doc);
-    if as_int(doc.get("pending")) > 0 {
+    if (doc["pending"] as int) > 0 {
         return true;
     }
-    let error = as_str(doc.get("error"));
+    let error = doc["error"] as string;
     if error != "" {
         return mods_fail(error);
     }
@@ -550,9 +551,9 @@ fn mods_settle(doc) -> bool {
             ids.push(project);
         }
     }
-    for item in as_list(doc.get("incompatible")) {
-        let pair = as_list(item);
-        let project = as_str(pair[0]);
+    for item in (doc["incompatible"] as any[]) {
+        let pair = item as any[];
+        let project = pair[0] as string;
         if titles.contains(project) == false {
             ids.push(project);
         }
@@ -567,14 +568,14 @@ fn mods_settle(doc) -> bool {
 
 fn mods_on_titles(tag: string, response: any) -> bool {
     let doc = mods_read_doc();
-    let r = as_map(response);
-    if as_bool(r.get("ok")) {
-        let parsed = lumen::parse_json(as_str(r.get("body")));
-        if is_list(parsed) {
+    let r = response as {string: any};
+    if r["ok"] as bool {
+        let parsed = lumen::parse_json(r["body"] as string);
+        if parsed is any[] {
             let titles = mods_sub(doc, "titles");
-            for item in as_list(parsed) {
-                let p = as_map(item);
-                titles.insert(as_str(p.get("id")), as_str(p.get("title")));
+            for item in (parsed as any[]) {
+                let p = item as {string: any};
+                titles[(p["id"] as string)] = (p["title"] as string);
             }
             mods_write_doc(doc);
         }
@@ -585,7 +586,7 @@ fn mods_on_titles(tag: string, response: any) -> bool {
 fn mods_title(doc, project: string) -> string {
     let titles = mods_sub(doc, "titles");
     if titles.contains(project) {
-        return as_str(titles.get(project));
+        return titles[project] as string;
     }
     return project;
 }
@@ -597,7 +598,7 @@ fn mods_join(items, sep: string) -> string {
         if first == false {
             out = out + sep;
         }
-        out = out + as_str(item);
+        out = out + (item as string);
         first = false;
     }
     return out;
@@ -608,7 +609,7 @@ fn mods_join(items, sep: string) -> string {
 // plus what those require.
 fn mods_decide() -> bool {
     let doc = mods_read_doc();
-    let version = as_str(doc.get("version"));
+    let version = doc["version"] as string;
     let resolved = mods_sub(doc, "resolved");
     let missing = mods_sub(doc, "missing");
     let top = mods_sub(doc, "top");
@@ -621,12 +622,12 @@ fn mods_decide() -> bool {
             if broken.contains(project) {
                 continue;
             }
-            let entry = as_map(resolved.get(project));
-            for dep in as_list(entry.get("deps")) {
-                let dp = as_str(dep);
+            let entry = resolved[project] as {string: any};
+            for dep in (entry["deps"] as any[]) {
+                let dp = dep as string;
                 let gone = missing.contains(dp) && resolved.contains(dp) == false;
                 if gone || broken.contains(dp) {
-                    broken.insert(project, dp);
+                    broken[project] = dp;
                     changed = true;
                     break;
                 }
@@ -643,15 +644,15 @@ fn mods_decide() -> bool {
         }
     }
     while stack.len() > 0 {
-        let project = as_str(stack[stack.len() - 1]);
+        let project = stack[stack.len() - 1] as string;
         stack.remove(stack.len() - 1);
         if chosen.contains(project) {
             continue;
         }
-        chosen.insert(project, true);
-        let entry = as_map(resolved.get(project));
-        for dep in as_list(entry.get("deps")) {
-            let dp = as_str(dep);
+        chosen[project] = true;
+        let entry = resolved[project] as {string: any};
+        for dep in (entry["deps"] as any[]) {
+            let dp = dep as string;
             if resolved.contains(dp) {
                 stack.push(dp);
             }
@@ -666,12 +667,12 @@ fn mods_decide() -> bool {
         }
         let reason = "";
         if missing.contains(project) {
-            reason = as_str(missing.get(project));
+            reason = missing[project] as string;
         } else if broken.contains(project) {
-            let cause = as_str(broken.get(project));
+            let cause = broken[project] as string;
             reason = "needs " + mods_title(doc, cause) + ", which ";
             if missing.contains(cause) {
-                reason = reason + as_str(missing.get(cause));
+                reason = reason + (missing[cause] as string);
             } else {
                 reason = reason + "cannot run on " + version + " either";
             }
@@ -679,16 +680,16 @@ fn mods_decide() -> bool {
             reason = "could not be resolved";
         }
         let line = mods_title(doc, project) + " " + reason;
-        if as_bool(top.get(project)) {
+        if top[project] as bool {
             blocked.push(line);
         } else {
             skipped.push(line);
         }
     }
-    for item in as_list(doc.get("incompatible")) {
-        let pair = as_list(item);
-        let a = as_str(pair[0]);
-        let b = as_str(pair[1]);
+    for item in (doc["incompatible"] as any[]) {
+        let pair = item as any[];
+        let a = pair[0] as string;
+        let b = pair[1] as string;
         if chosen.contains(a) && chosen.contains(b) {
             blocked.push(mods_title(doc, b) + " does not work together with "
                 + mods_title(doc, a) + ". Remove one of them from the profile.");
@@ -698,19 +699,19 @@ fn mods_decide() -> bool {
     let final = new_list();
     let extra = new_list();
     for project in chosen.keys() {
-        let entry = as_map(resolved.get(project));
+        let entry = resolved[project] as {string: any};
         let f = new_map();
-        f.insert("project", project);
-        f.insert("title", mods_title(doc, project));
-        f.insert("file", as_str(entry.get("file")));
-        f.insert("url", as_str(entry.get("url")));
-        f.insert("sha1", as_str(entry.get("sha1")));
+        f["project"] = project;
+        f["title"] = mods_title(doc, project);
+        f["file"] = (entry["file"] as string);
+        f["url"] = (entry["url"] as string);
+        f["sha1"] = (entry["sha1"] as string);
         final.push(f);
         if top.contains(project) == false {
             extra.push(mods_title(doc, project));
         }
     }
-    doc.insert("final", final);
+    doc["final"] = final;
     mods_write_doc(doc);
 
     let report = "";
@@ -748,7 +749,7 @@ fn mods_confirm_clicked(id: string) -> bool {
 
 fn mods_run() -> bool {
     let doc = mods_read_doc();
-    let version = as_str(doc.get("version"));
+    let version = doc["version"] as string;
     if install_is_installed(version) == false {
         mods_set_phase("installing", "Installing " + version + "...");
         signal<string>("prep_after_install").set(version);
@@ -780,7 +781,7 @@ fn mods_loader_meta(loader: string) -> string {
 
 fn mods_loader() -> bool {
     let doc = mods_read_doc();
-    let loader = as_str(doc.get("loader"));
+    let loader = doc["loader"] as string;
     if loader == "vanilla" {
         return mods_fetch_files();
     }
@@ -805,19 +806,19 @@ fn mods_loader_on_disk(loader: string, version: string) -> string {
 // Both list the newest first.
 fn mods_on_loader_list(tag: string, response: any) -> bool {
     let doc = mods_read_doc();
-    let loader = as_str(doc.get("loader"));
-    let version = as_str(doc.get("version"));
-    let r = as_map(response);
+    let loader = doc["loader"] as string;
+    let version = doc["version"] as string;
+    let r = response as {string: any};
     let picked = "";
-    if as_bool(r.get("ok")) {
-        let parsed = lumen::parse_json(as_str(r.get("body")));
-        if is_list(parsed) {
-            for item in as_list(parsed) {
-                let m = as_map(item);
-                let v = as_str(m.get("version"));
+    if r["ok"] as bool {
+        let parsed = lumen::parse_json(r["body"] as string);
+        if parsed is any[] {
+            for item in (parsed as any[]) {
+                let m = item as {string: any};
+                let v = m["version"] as string;
                 let stable = v.contains("-") == false;
                 if m.contains("stable") {
-                    stable = as_bool(m.get("stable"));
+                    stable = m["stable"] as bool;
                 }
                 if stable {
                     picked = v;
@@ -830,14 +831,14 @@ fn mods_on_loader_list(tag: string, response: any) -> bool {
         let cached = mods_loader_on_disk(loader, version);
         if cached == "" {
             return mods_fail(profiles_loader_label(loader) + " could not be reached. "
-                + as_str(r.get("error")));
+                + (r["error"] as string));
         }
-        doc.insert("loader_id", cached);
+        doc["loader_id"] = cached;
         mods_write_doc(doc);
         return mods_fetch_files();
     }
     let loader_id = loader + "-loader-" + picked + "-" + version;
-    doc.insert("loader_id", loader_id);
+    doc["loader_id"] = loader_id;
     mods_write_doc(doc);
     if files::exists(loaders_dir() + "/" + loader_id + ".json") {
         return mods_fetch_files();
@@ -848,22 +849,22 @@ fn mods_on_loader_list(tag: string, response: any) -> bool {
 
 fn mods_on_loader_profile(tag: string, response: any) -> bool {
     let doc = mods_read_doc();
-    let loader = as_str(doc.get("loader"));
-    let version = as_str(doc.get("version"));
-    let r = as_map(response);
-    if as_bool(r.get("ok")) == false {
-        if as_int(r.get("status")) >= 400 && as_int(r.get("status")) < 500 {
+    let loader = doc["loader"] as string;
+    let version = doc["version"] as string;
+    let r = response as {string: any};
+    if (r["ok"] as bool) == false {
+        if (r["status"] as int) >= 400 && (r["status"] as int) < 500 {
             return mods_fail(profiles_loader_label(loader) + " does not run on " + version + " yet.");
         }
         return mods_fail(profiles_loader_label(loader) + " could not be reached. "
-            + as_str(r.get("error")));
+            + (r["error"] as string));
     }
-    let body = as_str(r.get("body"));
+    let body = r["body"] as string;
     let parsed = lumen::parse_json(body);
-    if is_map(parsed) == false || as_map(parsed).contains("mainClass") == false {
+    if (parsed is {string: any}) == false || (parsed as {string: any}).contains("mainClass") == false {
         return mods_fail(profiles_loader_label(loader) + " sent a launch profile Allay could not read.");
     }
-    files::write(loaders_dir() + "/" + as_str(doc.get("loader_id")) + ".json", body);
+    files::write(loaders_dir() + "/" + (doc["loader_id"] as string) + ".json", body);
     return mods_fetch_files();
 }
 
@@ -873,12 +874,12 @@ fn maven_path(name: string) -> string {
     if parts.len() < 3 {
         return "";
     }
-    let group = as_str(parts[0]).replace(".", "/");
-    let artifact = as_str(parts[1]);
-    let version = as_str(parts[2]);
+    let group = (parts[0] as string).replace(".", "/");
+    let artifact = parts[1] as string;
+    let version = parts[2] as string;
     let file = artifact + "-" + version;
     if parts.len() > 3 {
-        file = file + "-" + as_str(parts[3]);
+        file = file + "-" + (parts[3] as string);
     }
     return group + "/" + artifact + "/" + version + "/" + file + ".jar";
 }
@@ -892,26 +893,26 @@ fn mods_manifest_path(game_dir: string) -> string {
 // Allay did not put there is left alone.
 fn mods_fetch_files() -> bool {
     let doc = mods_read_doc();
-    let pid = as_str(doc.get("profile"));
-    let version = as_str(doc.get("version"));
+    let pid = doc["profile"] as string;
+    let version = doc["version"] as string;
     let game_dir = profiles_game_dir(pid, version);
     files::mkdir(game_dir);
     let rows = [];
 
-    let loader_id = as_str(doc.get("loader_id"));
+    let loader_id = doc["loader_id"] as string;
     if loader_id != "" {
         let parsed = lumen::parse_json(files::read(loaders_dir() + "/" + loader_id + ".json"));
-        if is_map(parsed) == false {
+        if (parsed is {string: any}) == false {
             return mods_fail("The saved " + loader_id + " launch profile could not be read.");
         }
-        let root = as_map(parsed);
-        for item in as_list(root.get("libraries")) {
-            let lib = as_map(item);
-            let path = maven_path(as_str(lib.get("name")));
+        let root = parsed as {string: any};
+        for item in (root["libraries"] as any[]) {
+            let lib = item as {string: any};
+            let path = maven_path(lib["name"] as string);
             if path == "" {
                 continue;
             }
-            let base = as_str(lib.get("url"));
+            let base = lib["url"] as string;
             if base == "" {
                 base = "https://maven.fabricmc.net/";
             }
@@ -920,61 +921,61 @@ fn mods_fetch_files() -> bool {
             }
             let sha1 = "";
             if lib.contains("sha1") {
-                sha1 = as_str(lib.get("sha1"));
+                sha1 = lib["sha1"] as string;
             }
             install_queue_add(rows, base + path, libraries_dir() + "/" + path, "loader", sha1);
         }
     }
 
-    if as_str(doc.get("loader")) != "vanilla" {
+    if (doc["loader"] as string) != "vanilla" {
         let mods_dir = game_dir + "/mods";
         files::mkdir(mods_dir);
         let wanted = new_list();
-        for item in as_list(doc.get("final")) {
-            let f = as_map(item);
-            wanted.push(as_str(f.get("file")));
+        for item in (doc["final"] as any[]) {
+            let f = item as {string: any};
+            wanted.push(f["file"] as string);
         }
         let old = lumen::parse_json(files::read(mods_manifest_path(game_dir)));
-        if is_map(old) {
-            let placed = as_list(as_map(old).get("files"));
+        if old is {string: any} {
+            let placed = (old as {string: any})["files"] as any[];
             for name in placed {
-                let n = as_str(name);
+                let n = name as string;
                 if mods_list_has(wanted, n) == false {
                     files::remove(mods_dir + "/" + n);
                 }
             }
         }
         let manifest = new_map();
-        manifest.insert("files", wanted);
-        files::write(mods_manifest_path(game_dir), json_stringify(manifest));
+        manifest["files"] = wanted;
+        files::write(mods_manifest_path(game_dir), json::stringify(manifest));
 
-        for item in as_list(doc.get("final")) {
-            let f = as_map(item);
-            let path = mods_dir + "/" + as_str(f.get("file"));
-            let sha1 = as_str(f.get("sha1"));
+        for item in (doc["final"] as any[]) {
+            let f = item as {string: any};
+            let path = mods_dir + "/" + (f["file"] as string);
+            let sha1 = f["sha1"] as string;
             if files::exists(path) && files::digest(path, "sha1") != sha1 {
                 files::remove(path);
             }
-            install_queue_add(rows, as_str(f.get("url")), path, "mod", sha1);
+            install_queue_add(rows, f["url"] as string, path, "mod", sha1);
         }
     }
 
-    mods_set_phase("downloading", "Downloading " + str(rows.len()) + " files...");
+    mods_set_phase("downloading", "Downloading " + string(rows.len()) + " files...");
     return queue_run(rows, "prepare");
 }
 
 // install.cdl calls this when the queue this file started has drained.
 fn mods_after_downloads(failed: int) -> bool {
     if failed > 0 {
-        return mods_fail(str(failed) + " files did not download. Press Play again to retry "
+        return mods_fail(string(failed) + " files did not download. Press Play again to retry "
             + "the ones that are missing. " + signal<string>("install_error").get());
     }
     let doc = mods_read_doc();
-    let pid = as_str(doc.get("profile"));
-    let version = as_str(doc.get("version"));
+    let pid = doc["profile"] as string;
+    let version = doc["version"] as string;
     mods_set_phase("launching", "Starting the game...");
-    let started = launch_start(pid, version, as_str(doc.get("loader_id")),
-        as_int(doc.get("memory")), profiles_game_dir(pid, version));
+    let started = launch_start(pid, version, doc["loader_id"] as string,
+        doc["memory"] as int, profiles_game_dir(pid, version));
     if started == false {
         return mods_fail(signal<string>("status").get());
     }

@@ -1,4 +1,5 @@
 import "lumen.cdl";
+import "std/json";
 
 // Signing in to a Microsoft account.
 //
@@ -74,19 +75,19 @@ fn accounts_read_doc() {
         text = accounts_empty_doc();
     }
     let parsed = lumen::parse_json(text);
-    if is_map(parsed) == false {
+    if (parsed is {string: any}) == false {
         parsed = lumen::parse_json(accounts_empty_doc());
     }
     return parsed;
 }
 
 fn accounts_list_of(d) {
-    let m = as_map(d);
-    return as_list(m.get("accounts"));
+    let m = d as {string: any};
+    return m["accounts"] as any[];
 }
 
 fn accounts_persist(d) -> bool {
-    let text = json_stringify(d);
+    let text = json::stringify(d);
     return files::write(accounts_store_path(), text);
 }
 
@@ -94,24 +95,24 @@ fn accounts_persist(d) -> bool {
 // shows, so both read from one place.
 fn accounts_refresh() -> bool {
     let d = accounts_read_doc();
-    let m = as_map(d);
-    let active = as_str(m.get("active"));
+    let m = d as {string: any};
+    let active = m["active"] as string;
     let list = accounts_list_of(d);
     let rows = [];
     let active_name = "Not signed in";
     let active_kind = "No account selected";
 
     for entry in list {
-        let a = as_map(entry);
-        let id = as_str(a.get("id"));
+        let a = entry as {string: any};
+        let id = a["id"] as string;
         if id == active {
-            a.insert("state", "Active");
-            active_name = as_str(a.get("name"));
-            active_kind = accounts_kind_label(as_str(a.get("type")));
+            a["state"] = "Active";
+            active_name = a["name"] as string;
+            active_kind = accounts_kind_label(a["type"] as string);
         } else {
-            a.insert("state", "");
+            a["state"] = "";
         }
-        a.insert("kind_label", accounts_kind_label(as_str(a.get("type"))));
+        a["kind_label"] = accounts_kind_label(a["type"] as string);
         rows.push(entry);
     }
 
@@ -132,7 +133,7 @@ fn accounts_refresh() -> bool {
 // ids are registered here after the array signal is written.
 fn accounts_bind_rows(rows) -> bool {
     for entry in rows {
-        let id = as_str(as_map(entry).get("id"));
+        let id = (entry as {string: any})["id"] as string;
         lumen::on("click", "use-account|" + id, "accounts_use_clicked");
         lumen::on("click", "drop-account|" + id, "accounts_drop_clicked");
     }
@@ -150,13 +151,13 @@ fn accounts_kind_label(kind: string) -> string {
 // and launch falls back to offline play.
 fn accounts_active() {
     let d = accounts_read_doc();
-    let m = as_map(d);
-    let active = as_str(m.get("active"));
+    let m = d as {string: any};
+    let active = m["active"] as string;
     let list = accounts_list_of(d);
     let found = new_map();
     for entry in list {
-        let a = as_map(entry);
-        if as_str(a.get("id")) == active {
+        let a = entry as {string: any};
+        if (a["id"] as string) == active {
             found = entry;
         }
     }
@@ -253,29 +254,29 @@ fn accounts_fail(message: string) -> bool {
 // --- 1. Device code ------------------------------------------------------------
 
 fn accounts_on_devicecode(tag: string, response: any) -> bool {
-    let r = as_map(response);
-    if as_bool(r.get("ok")) == false {
+    let r = response as {string: any};
+    if (r["ok"] as bool) == false {
         return accounts_fail("Microsoft would not issue a code");
     }
-    let raw = as_str(r.get("body"));
+    let raw = r["body"] as string;
     let parsed = lumen::parse_json(raw);
-    if is_map(parsed) == false {
+    if (parsed is {string: any}) == false {
         return accounts_fail("Microsoft's reply could not be read");
     }
-    let body = as_map(parsed);
+    let body = parsed as {string: any};
     if body.contains("device_code") == false {
         return accounts_fail("Microsoft's reply carried no device code");
     }
 
-    signal<string>("account_device_code").set(as_str(body.get("device_code")));
-    signal<string>("account_code").set(as_str(body.get("user_code")));
-    signal<string>("account_url").set(as_str(body.get("verification_uri")));
+    signal<string>("account_device_code").set(body["device_code"] as string);
+    signal<string>("account_code").set(body["user_code"] as string);
+    signal<string>("account_url").set(body["verification_uri"] as string);
     signal<string>("account_flow").set("waiting");
     signal<string>("account_status").set("Enter the code in your browser, then wait here.");
 
     let interval = 5;
     if body.contains("interval") {
-        interval = as_int(body.get("interval"));
+        interval = body["interval"] as int;
     }
     signal<int>("account_interval").set(interval);
     lumen::set_timeout("account-poll", interval * 1000);
@@ -296,18 +297,18 @@ fn accounts_poll_tick(name: string) -> bool {
 }
 
 fn accounts_on_token(tag: string, response: any) -> bool {
-    let r = as_map(response);
-    let raw = as_str(r.get("body"));
+    let r = response as {string: any};
+    let raw = r["body"] as string;
     let parsed = lumen::parse_json(raw);
-    if is_map(parsed) == false {
+    if (parsed is {string: any}) == false {
         return accounts_fail("Microsoft's reply could not be read");
     }
-    let body = as_map(parsed);
+    let body = parsed as {string: any};
 
     // The pending reply is an HTTP error carrying a named reason, so the error
     // name decides whether to keep waiting rather than the status alone.
     if body.contains("error") {
-        let err = as_str(body.get("error"));
+        let err = body["error"] as string;
         if err == "authorization_pending" {
             let interval = signal<int>("account_interval").get();
             lumen::set_timeout("account-poll", interval * 1000);
@@ -339,9 +340,9 @@ fn accounts_on_token(tag: string, response: any) -> bool {
         return accounts_fail("Microsoft's reply carried no token");
     }
 
-    signal<string>("account_msa_token").set(as_str(body.get("access_token")));
+    signal<string>("account_msa_token").set(body["access_token"] as string);
     if body.contains("refresh_token") {
-        signal<string>("account_refresh_token").set(as_str(body.get("refresh_token")));
+        signal<string>("account_refresh_token").set(body["refresh_token"] as string);
     }
     signal<string>("account_flow").set("xbox");
     signal<string>("account_status").set("Signing in to Xbox Live...");
@@ -356,32 +357,32 @@ fn accounts_on_token(tag: string, response: any) -> bool {
 // --- 3. Xbox Live ----------------------------------------------------------------
 
 fn accounts_on_xbl(tag: string, response: any) -> bool {
-    let r = as_map(response);
-    if as_bool(r.get("ok")) == false {
+    let r = response as {string: any};
+    if (r["ok"] as bool) == false {
         return accounts_fail("Xbox Live refused the token");
     }
-    let raw = as_str(r.get("body"));
+    let raw = r["body"] as string;
     let parsed = lumen::parse_json(raw);
-    if is_map(parsed) == false {
+    if (parsed is {string: any}) == false {
         return accounts_fail("Xbox Live's reply could not be read");
     }
-    let body = as_map(parsed);
+    let body = parsed as {string: any};
     if body.contains("Token") == false {
         return accounts_fail("Xbox Live returned no token");
     }
-    let token = as_str(body.get("Token"));
+    let token = body["Token"] as string;
     signal<string>("account_xbl_token").set(token);
 
     // The user hash sits in a nested claim list.
     let uhs = "";
     if body.contains("DisplayClaims") {
-        let claims = as_map(body.get("DisplayClaims"));
+        let claims = body["DisplayClaims"] as {string: any};
         if claims.contains("xui") {
-            let xui = as_list(claims.get("xui"));
+            let xui = claims["xui"] as any[];
             for entry in xui {
-                let e = as_map(entry);
+                let e = entry as {string: any};
                 if e.contains("uhs") {
-                    uhs = as_str(e.get("uhs"));
+                    uhs = e["uhs"] as string;
                 }
             }
         }
@@ -399,17 +400,17 @@ fn accounts_on_xbl(tag: string, response: any) -> bool {
 // --- 4. XSTS ----------------------------------------------------------------------
 
 fn accounts_on_xsts(tag: string, response: any) -> bool {
-    let r = as_map(response);
-    let raw = as_str(r.get("body"));
+    let r = response as {string: any};
+    let raw = r["body"] as string;
     let parsed = lumen::parse_json(raw);
-    if is_map(parsed) == false {
+    if (parsed is {string: any}) == false {
         return accounts_fail("Xbox Live's authorisation could not be read");
     }
-    let body = as_map(parsed);
-    if as_bool(r.get("ok")) == false {
+    let body = parsed as {string: any};
+    if (r["ok"] as bool) == false {
         let reason = "Xbox Live refused the authorisation";
         if body.contains("XErr") {
-            let code = str(as_int(body.get("XErr")));
+            let code = string(body["XErr"] as int);
             if code == "2148916233" {
                 reason = "This Microsoft account has no Xbox profile. Create one at xbox.com, then sign in again.";
             } else if code == "2148916235" {
@@ -425,7 +426,7 @@ fn accounts_on_xsts(tag: string, response: any) -> bool {
     if body.contains("Token") == false {
         return accounts_fail("Xbox Live returned no authorisation");
     }
-    let xsts = as_str(body.get("Token"));
+    let xsts = body["Token"] as string;
     let uhs = signal<string>("account_uhs").get();
     signal<string>("account_status").set("Signing in to Minecraft...");
 
@@ -438,20 +439,20 @@ fn accounts_on_xsts(tag: string, response: any) -> bool {
 // --- 5. Minecraft token, then the profile ------------------------------------------
 
 fn accounts_on_mc_login(tag: string, response: any) -> bool {
-    let r = as_map(response);
-    if as_bool(r.get("ok")) == false {
+    let r = response as {string: any};
+    if (r["ok"] as bool) == false {
         return accounts_fail("Minecraft services refused the sign-in");
     }
-    let raw = as_str(r.get("body"));
+    let raw = r["body"] as string;
     let parsed = lumen::parse_json(raw);
-    if is_map(parsed) == false {
+    if (parsed is {string: any}) == false {
         return accounts_fail("The Minecraft sign-in reply could not be read");
     }
-    let body = as_map(parsed);
+    let body = parsed as {string: any};
     if body.contains("access_token") == false {
         return accounts_fail("Minecraft services returned no token");
     }
-    signal<string>("account_mc_token").set(as_str(body.get("access_token")));
+    signal<string>("account_mc_token").set(body["access_token"] as string);
     signal<string>("account_status").set("Reading the profile...");
     accounts_get("https://api.minecraftservices.com/minecraft/profile",
                  "mc-profile", signal<string>("account_mc_token").get());
@@ -459,24 +460,24 @@ fn accounts_on_mc_login(tag: string, response: any) -> bool {
 }
 
 fn accounts_on_profile(tag: string, response: any) -> bool {
-    let r = as_map(response);
-    let status = as_int(r.get("status"));
+    let r = response as {string: any};
+    let status = r["status"] as int;
     if status == 404 {
         return accounts_fail("This account does not own Minecraft: Java Edition.");
     }
-    if as_bool(r.get("ok")) == false {
+    if (r["ok"] as bool) == false {
         return accounts_fail("The Minecraft profile could not be read");
     }
-    let raw = as_str(r.get("body"));
+    let raw = r["body"] as string;
     let parsed = lumen::parse_json(raw);
-    if is_map(parsed) == false {
+    if (parsed is {string: any}) == false {
         return accounts_fail("The Minecraft profile could not be read");
     }
-    let body = as_map(parsed);
+    let body = parsed as {string: any};
     if body.contains("name") == false {
         return accounts_fail("The Minecraft profile carried no name");
     }
-    return accounts_store(as_str(body.get("name")), accounts_dash_uuid(as_str(body.get("id"))));
+    return accounts_store(body["name"] as string, accounts_dash_uuid(body["id"] as string));
 }
 
 // The profile gives a UUID with the dashes stripped; the game wants them back.
@@ -491,37 +492,37 @@ fn accounts_dash_uuid(raw: string) -> string {
 // than adding a second copy of the same player.
 fn accounts_store(name: string, uuid: string) -> bool {
     let d = accounts_read_doc();
-    let m = as_map(d);
+    let m = d as {string: any};
     let list = accounts_list_of(d);
 
     let at = -1;
     let i = 0;
     for entry in list {
-        let a = as_map(entry);
-        if as_str(a.get("uuid")) == uuid {
+        let a = entry as {string: any};
+        if (a["uuid"] as string) == uuid {
             at = i;
         }
         i = i + 1;
     }
 
-    let id = "acct-" + str(as_int(m.get("next_seq")));
+    let id = "acct-" + string(m["next_seq"] as int);
     if at >= 0 {
-        id = as_str(as_map(list[at]).get("id"));
+        id = (list[at] as {string: any})["id"] as string;
         list.remove(at);
     } else {
-        m.insert("next_seq", as_int(m.get("next_seq")) + 1);
+        m["next_seq"] = (m["next_seq"] as int) + 1;
     }
 
     let rm = new_map();
-    rm.insert("id", id);
-    rm.insert("type", "msa");
-    rm.insert("name", name);
-    rm.insert("uuid", uuid);
-    rm.insert("access_token", signal<string>("account_mc_token").get());
-    rm.insert("refresh_token", signal<string>("account_refresh_token").get());
+    rm["id"] = id;
+    rm["type"] = "msa";
+    rm["name"] = name;
+    rm["uuid"] = uuid;
+    rm["access_token"] = signal<string>("account_mc_token").get();
+    rm["refresh_token"] = signal<string>("account_refresh_token").get();
     list.push(rm);
 
-    m.insert("active", id);
+    m["active"] = id;
     accounts_persist(d);
     accounts_clear_secrets();
 
@@ -548,15 +549,15 @@ fn accounts_clear_secrets() -> bool {
 // --- Picking and removing --------------------------------------------------------
 
 fn accounts_row_id(id: string) -> string {
-    let cut = id.find("|");
+    let cut = id.index_of("|").unwrap_or(-1);
     return id[cut + 1..id.len()];
 }
 
 fn accounts_use_clicked(id: string) -> bool {
     let acct = accounts_row_id(id);
     let d = accounts_read_doc();
-    let m = as_map(d);
-    m.insert("active", acct);
+    let m = d as {string: any};
+    m["active"] = acct;
     accounts_persist(d);
     accounts_refresh();
     return true;
@@ -565,12 +566,12 @@ fn accounts_use_clicked(id: string) -> bool {
 fn accounts_drop_clicked(id: string) -> bool {
     let acct = accounts_row_id(id);
     let d = accounts_read_doc();
-    let m = as_map(d);
+    let m = d as {string: any};
     let list = accounts_list_of(d);
     let at = -1;
     let i = 0;
     for entry in list {
-        if as_str(as_map(entry).get("id")) == acct {
+        if ((entry as {string: any})["id"] as string) == acct {
             at = i;
         }
         i = i + 1;
@@ -579,8 +580,8 @@ fn accounts_drop_clicked(id: string) -> bool {
         return false;
     }
     list.remove(at);
-    if as_str(m.get("active")) == acct {
-        m.insert("active", "");
+    if (m["active"] as string) == acct {
+        m["active"] = "";
     }
     accounts_persist(d);
     accounts_refresh();

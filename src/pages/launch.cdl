@@ -14,34 +14,34 @@ import "lumen.cdl";
 // its profile; with none they fall back to offline play, which the game
 // accepts in singleplayer and on servers that do not check.
 fn launch_player() -> string {
-    let a = as_map(accounts_active());
+    let a = accounts_active() as {string: any};
     if a.contains("name") {
-        return as_str(a.get("name"));
+        return a["name"] as string;
     }
     return "Player";
 }
 
 fn launch_uuid() -> string {
-    let a = as_map(accounts_active());
+    let a = accounts_active() as {string: any};
     if a.contains("uuid") {
-        return as_str(a.get("uuid"));
+        return a["uuid"] as string;
     }
     return "0f4c1f2e-9a3b-4c5d-8e6f-7a8b9c0d1e2f";
 }
 
 fn launch_token() -> string {
-    let a = as_map(accounts_active());
+    let a = accounts_active() as {string: any};
     if a.contains("access_token") {
-        return as_str(a.get("access_token"));
+        return a["access_token"] as string;
     }
     return "0";
 }
 
 // The game treats "msa" as a signed-in session and "legacy" as offline play.
 fn launch_user_type() -> string {
-    let a = as_map(accounts_active());
+    let a = accounts_active() as {string: any};
     if a.contains("type") {
-        if as_str(a.get("type")) == "msa" {
+        if (a["type"] as string) == "msa" {
             return "msa";
         }
     }
@@ -55,7 +55,7 @@ fn launch_init() -> bool {
     signal<string>("java_version").set("");
     // The probe's own output tells us whether java is on PATH at all.
     let probe_args = ["-version"];
-    let started = process::start("java", probe_args, "java-probe", Default::default());
+    let started = process::start("java", probe_args, "java-probe", process::StartOptions::default());
     if started == false {
         signal<string>("java_version").set("java was not found on PATH");
     }
@@ -78,9 +78,9 @@ fn launch_lib_key(name: string) -> string {
     if parts.len() < 3 {
         return name;
     }
-    let key = as_str(parts[0]) + ":" + as_str(parts[1]);
+    let key = (parts[0] as string) + ":" + (parts[1] as string);
     if parts.len() > 3 {
-        key = key + ":" + as_str(parts[3]);
+        key = key + ":" + (parts[3] as string);
     }
     return key;
 }
@@ -91,15 +91,15 @@ fn launch_loader_classpath(loader, taken) -> string {
     if loader.contains("libraries") == false {
         return cp;
     }
-    let libs = as_list(loader.get("libraries"));
+    let libs = loader["libraries"] as any[];
     for entry in libs {
-        let lib = as_map(entry);
-        let name = as_str(lib.get("name"));
+        let lib = entry as {string: any};
+        let name = lib["name"] as string;
         let path = maven_path(name);
         if path == "" {
             continue;
         }
-        taken.insert(launch_lib_key(name), true);
+        taken[launch_lib_key(name)] = true;
         cp = cp + libraries_dir() + "/" + path + ":";
     }
     return cp;
@@ -112,21 +112,21 @@ fn launch_loader_classpath(loader, taken) -> string {
 // to put here; install.cdl unpacks those instead.
 fn launch_classpath(root, version: string, taken) -> string {
     let cp = "";
-    for entry in as_list(root.get("libraries")) {
-        let lib = as_map(entry);
+    for entry in (root["libraries"] as any[]) {
+        let lib = entry as {string: any};
         if install_lib_allowed(lib) == false || lib.contains("downloads") == false {
             continue;
         }
-        let name = as_str(lib.get("name"));
+        let name = lib["name"] as string;
         if taken.contains(launch_lib_key(name)) {
             continue;
         }
-        let downloads = as_map(lib.get("downloads"));
+        let downloads = lib["downloads"] as {string: any};
         if downloads.contains("artifact") == false {
             continue;
         }
-        let artifact = as_map(downloads.get("artifact"));
-        cp = cp + libraries_dir() + "/" + as_str(artifact.get("path")) + ":";
+        let artifact = downloads["artifact"] as {string: any};
+        cp = cp + libraries_dir() + "/" + (artifact["path"] as string) + ":";
     }
     return cp + install_client_jar(version);
 }
@@ -134,8 +134,8 @@ fn launch_classpath(root, version: string, taken) -> string {
 fn launch_substitute(value: string, version: string, root, game_dir: string, classpath: string) -> string {
     let asset_id = "";
     if root.contains("assetIndex") {
-        let index = as_map(root.get("assetIndex"));
-        asset_id = as_str(index.get("id"));
+        let index = root["assetIndex"] as {string: any};
+        asset_id = index["id"] as string;
     }
     let out = value;
     out = out.replace("${auth_player_name}", launch_player());
@@ -151,7 +151,7 @@ fn launch_substitute(value: string, version: string, root, game_dir: string, cla
     out = out.replace("${auth_xuid}", "");
     out = out.replace("${user_type}", launch_user_type());
     out = out.replace("${user_properties}", "{}");
-    out = out.replace("${version_type}", as_str(root.get("type")));
+    out = out.replace("${version_type}", root["type"] as string);
     out = out.replace("${natives_directory}", install_natives_dir(version));
     out = out.replace("${launcher_name}", "allay");
     out = out.replace("${launcher_version}", "0.1.0");
@@ -165,10 +165,10 @@ fn launch_substitute(value: string, version: string, root, game_dir: string, cla
 // gate optional features the launcher does not offer (demo mode, a forced
 // resolution), so only the plain strings are taken.
 fn launch_collect_args(args, out, version: string, root, game_dir: string, classpath: string) -> bool {
-    let items = as_list(args);
+    let items = args as any[];
     for item in items {
-        if is_str(item) {
-            let filled = launch_substitute(as_str(item), version, root, game_dir, classpath);
+        if item is string {
+            let filled = launch_substitute(item as string, version, root, game_dir, classpath);
             out.push(filled);
         }
     }
@@ -195,20 +195,20 @@ fn launch_start(profile_id: string, version: string, loader_id: string, memory_m
     }
 
     let parsed = launch_read_version(version);
-    if is_map(parsed) == false {
+    if (parsed is {string: any}) == false {
         signal<string>("status").set("The metadata for " + version + " could not be read");
         return false;
     }
-    let root = as_map(parsed);
+    let root = parsed as {string: any};
 
     let loader = new_map();
     if loader_id != "" {
         let lparsed = lumen::parse_json(files::read(loaders_dir() + "/" + loader_id + ".json"));
-        if is_map(lparsed) == false {
+        if (lparsed is {string: any}) == false {
             signal<string>("status").set("The launch profile " + loader_id + " could not be read");
             return false;
         }
-        loader = as_map(lparsed);
+        loader = lparsed as {string: any};
     }
 
     files::mkdir(game_dir);
@@ -218,9 +218,9 @@ fn launch_start(profile_id: string, version: string, loader_id: string, memory_m
     let args = [];
 
     if root.contains("arguments") {
-        let arguments = as_map(root.get("arguments"));
+        let arguments = root["arguments"] as {string: any};
         if arguments.contains("jvm") {
-            launch_collect_args(arguments.get("jvm"), args, version, root, game_dir, classpath);
+            launch_collect_args(arguments["jvm"], args, version, root, game_dir, classpath);
         }
         launch_loader_args(loader, "jvm", args, version, root, game_dir, classpath);
     } else {
@@ -231,7 +231,7 @@ fn launch_start(profile_id: string, version: string, loader_id: string, memory_m
         args.push(classpath);
     }
 
-    args.push("-Xmx" + str(memory_mb) + "M");
+    args.push("-Xmx" + string(memory_mb) + "M");
     let extra = signal<string>("jvm_args").get();
     if extra.trim() != "" {
         let words = extra.split(" ");
@@ -243,19 +243,19 @@ fn launch_start(profile_id: string, version: string, loader_id: string, memory_m
     }
 
     if loader.contains("mainClass") {
-        args.push(as_str(loader.get("mainClass")));
+        args.push(loader["mainClass"] as string);
     } else {
-        args.push(as_str(root.get("mainClass")));
+        args.push(root["mainClass"] as string);
     }
 
     if root.contains("arguments") {
-        let arguments = as_map(root.get("arguments"));
+        let arguments = root["arguments"] as {string: any};
         if arguments.contains("game") {
-            launch_collect_args(arguments.get("game"), args, version, root, game_dir, classpath);
+            launch_collect_args(arguments["game"], args, version, root, game_dir, classpath);
         }
         launch_loader_args(loader, "game", args, version, root, game_dir, classpath);
     } else if root.contains("minecraftArguments") {
-        let legacy = as_str(root.get("minecraftArguments"));
+        let legacy = root["minecraftArguments"] as string;
         let filled = launch_substitute(legacy, version, root, game_dir, classpath);
         let words = filled.split(" ");
         for word in words {
@@ -268,7 +268,7 @@ fn launch_start(profile_id: string, version: string, loader_id: string, memory_m
     let tag = "game:" + profile_id;
     signal<string>("launch_log").set("");
     let started = process::start("java", args, tag,
-        process::StartOptions { cwd: game_dir, ..Default::default() });
+        process::StartOptions { cwd: game_dir, .. });
     if started == false {
         signal<string>("status").set("java could not be started");
         return false;
@@ -284,11 +284,11 @@ fn launch_loader_args(loader, kind: string, args, version: string, root, game_di
     if loader.contains("arguments") == false {
         return false;
     }
-    let arguments = as_map(loader.get("arguments"));
+    let arguments = loader["arguments"] as {string: any};
     if arguments.contains(kind) == false {
         return false;
     }
-    return launch_collect_args(arguments.get(kind), args, version, root, game_dir, classpath);
+    return launch_collect_args(arguments[kind], args, version, root, game_dir, classpath);
 }
 
 // --- The child's output --------------------------------------------------------
@@ -331,7 +331,7 @@ fn on_process_exit(tag: string, code: int) -> bool {
     }
     signal<string>("launch_running").set("");
     let profile = signal<string>("launch_profile").get();
-    signal<string>("status").set("The game exited with code " + str(code));
+    signal<string>("status").set("The game exited with code " + string(code));
     profiles_record_played(profile);
     return true;
 }

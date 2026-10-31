@@ -51,7 +51,7 @@ fn versions_load_cache() -> bool {
     let cached = files::read(path);
     let cut = -1;
     if cached != "" {
-        cut = cached.find("\n");
+        cut = cached.index_of("\n").unwrap_or(-1);
     }
     if cut < 0 {
         signal<string>("versions_status").set("Loading versions...");
@@ -66,14 +66,14 @@ fn versions_load_cache() -> bool {
 }
 
 fn versions_on_http(tag: string, response: any) -> bool {
-    let r = as_map(response);
-    let ok = as_bool(r.get("ok"));
+    let r = response as {string: any};
+    let ok = r["ok"] as bool;
     if ok {
-        let body = as_str(r.get("body"));
-        let headers = as_map(r.get("headers"));
+        let body = r["body"] as string;
+        let headers = r["headers"] as {string: any};
         let stamp = "";
         if headers.contains("date") {
-            stamp = as_str(headers.get("date"));
+            stamp = headers["date"] as string;
         }
         let cache = stamp + "\n" + body;
         let path = versions_cache_path();
@@ -89,10 +89,10 @@ fn versions_on_http(tag: string, response: any) -> bool {
 }
 
 fn versions_report_offline(r) -> bool {
-    let status = as_int(r.get("status"));
-    let detail = as_str(r.get("error"));
+    let status = r["status"] as int;
+    let detail = r["error"] as string;
     if status != 0 {
-        detail = "HTTP " + str(status);
+        detail = "HTTP " + string(status);
     }
     let have = signal_array("versions_all").len();
     if have > 0 {
@@ -109,8 +109,8 @@ fn versions_report_offline(r) -> bool {
 fn versions_apply(body: string) -> bool {
     let parsed = lumen::parse_json(body);
     let done = false;
-    if is_map(parsed) {
-        let root = as_map(parsed);
+    if parsed is {string: any} {
+        let root = parsed as {string: any};
         versions_read_latest(root);
         if root.contains("versions") {
             versions_read_list(root);
@@ -126,13 +126,13 @@ fn versions_apply(body: string) -> bool {
 
 fn versions_read_latest(root) -> bool {
     if root.contains("latest") {
-        let latest = as_map(root.get("latest"));
+        let latest = root["latest"] as {string: any};
         if latest.contains("release") {
-            let release = as_str(latest.get("release"));
+            let release = latest["release"] as string;
             signal<string>("versions_latest_release").set(release);
         }
         if latest.contains("snapshot") {
-            let snapshot = as_str(latest.get("snapshot"));
+            let snapshot = latest["snapshot"] as string;
             signal<string>("versions_latest_snapshot").set(snapshot);
         }
     }
@@ -140,21 +140,21 @@ fn versions_read_latest(root) -> bool {
 }
 
 fn versions_read_list(root) -> bool {
-    let entries = as_list(root.get("versions"));
+    let entries = root["versions"] as any[];
     let rows = [];
     for entry in entries {
-        let m = as_map(entry);
+        let m = entry as {string: any};
         // A short date column reads better than the full timestamp, and the
         // field goes onto the record the manifest already gave us.
-        let stamp = as_str(m.get("releaseTime"));
+        let stamp = m["releaseTime"] as string;
         let date = stamp[..10];
-        m.insert("date", date);
+        m["date"] = date;
         rows.push(entry);
     }
     signal_array("versions_all").set(rows);
     let generation = signal<int>("versions_generation").get();
     let next = generation + 1;
-    signal<string>("versions_generation").set(str(next));
+    signal<string>("versions_generation").set(string(next));
     return true;
 }
 
@@ -169,27 +169,27 @@ fn versions_recount(kind: string, query: string, generation: string) -> string {
     let trimmed = query.trim();
     let needle = trimmed.lowercase();
     let states = versions_install_states();
-    let all = as_list(signal_array("versions_all").all());
+    let all = signal_array("versions_all").all() as any[];
     let view = [];
     for entry in all {
-        let m = as_map(entry);
+        let m = entry as {string: any};
         let kept = versions_matches(m, kind, needle);
         if kept {
-            let id = as_str(m.get("id"));
+            let id = m["id"] as string;
             // A keyed <for> does not repaint a row whose key it has seen
             // (lumen-fx/lumen#407), so the key carries the generation and an
             // install or removal rebuilds the rows.
-            m.insert("key", id + "@" + generation);
+            m["key"] = id + "@" + generation;
             let state = "absent";
             if states.contains(id) {
-                state = as_str(states.get(id));
+                state = states[id] as string;
             }
             if state == "installed" {
-                m.insert("install_label", "Uninstall");
+                m["install_label"] = "Uninstall";
             } else if state == "partial" {
-                m.insert("install_label", "Finish install");
+                m["install_label"] = "Finish install";
             } else {
-                m.insert("install_label", "Install");
+                m["install_label"] = "Install";
             }
             view.push(entry);
         }
@@ -197,15 +197,15 @@ fn versions_recount(kind: string, query: string, generation: string) -> string {
     signal_array("versions_view").set(view);
     let shown = view.len();
     if shown == total {
-        return str(total) + " versions";
+        return string(total) + " versions";
     }
-    return str(shown) + " of " + str(total) + " versions";
+    return string(shown) + " of " + string(total) + " versions";
 }
 
 // `kind` is the dropdown's selected value, spelled the way it is displayed,
 // so the filter compares against the text the user picked.
 fn versions_matches(m, kind: string, needle: string) -> bool {
-    let ty = as_str(m.get("type"));
+    let ty = m["type"] as string;
     let kind_ok = false;
     if kind == "Releases" {
         kind_ok = ty == "release";
@@ -221,7 +221,7 @@ fn versions_matches(m, kind: string, needle: string) -> bool {
         if needle == "" {
             keep = true;
         } else {
-            let id = as_str(m.get("id"));
+            let id = m["id"] as string;
             let lowered = id.lowercase();
             keep = lowered.contains(needle);
         }
@@ -235,7 +235,7 @@ fn versions_matches(m, kind: string, needle: string) -> bool {
 fn versions_install_states() {
     let states = new_map();
     for name in files::list(versions_dir()) {
-        states.insert(name, install_state(name));
+        states[name] = install_state(name);
     }
     return states;
 }
@@ -245,7 +245,7 @@ fn versions_install_states() {
 fn versions_mark_installed() -> bool {
     let generation = signal<int>("versions_generation").get();
     let next = generation + 1;
-    signal<string>("versions_generation").set(str(next));
+    signal<string>("versions_generation").set(string(next));
     return true;
 }
 

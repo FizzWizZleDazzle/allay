@@ -15,7 +15,7 @@ Microsoft account, and playing.
 
 ## Run from source
 
-Install the Lumen toolchain, 0.0.8 or newer, from
+Install the Lumen toolchain, 0.0.11 or newer, from
 [lumenfx.dev](https://lumenfx.dev). The installer also puts the runtime
 modules in place, and Allay needs four of them: filesystem, download,
 archive, and process. A toolchain installed with `--no-modules` runs Allay

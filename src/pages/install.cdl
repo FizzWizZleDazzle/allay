@@ -95,17 +95,17 @@ fn install_lib_allowed(lib) -> bool {
         return true;
     }
     let allowed = false;
-    for rule in as_list(lib.get("rules")) {
-        let r = as_map(rule);
+    for rule in (lib["rules"] as any[]) {
+        let r = rule as {string: any};
         let matches = true;
         if r.contains("os") {
-            let os = as_map(r.get("os"));
+            let os = r["os"] as {string: any};
             if os.contains("name") {
-                matches = as_str(os.get("name")) == install_os();
+                matches = (os["name"] as string) == install_os();
             }
         }
         if matches {
-            allowed = as_str(r.get("action")) == "allow";
+            allowed = (r["action"] as string) == "allow";
         }
     }
     return allowed;
@@ -120,21 +120,21 @@ fn install_legacy_native(lib) {
     if lib.contains("natives") == false || lib.contains("downloads") == false {
         return null;
     }
-    let nmap = as_map(lib.get("natives"));
+    let nmap = lib["natives"] as {string: any};
     if nmap.contains(install_os()) == false {
         return null;
     }
-    let raw_key = as_str(nmap.get(install_os()));
+    let raw_key = nmap[install_os()] as string;
     let classifier = raw_key.replace("${arch}", install_arch());
-    let downloads = as_map(lib.get("downloads"));
+    let downloads = lib["downloads"] as {string: any};
     if downloads.contains("classifiers") == false {
         return null;
     }
-    let classifiers = as_map(downloads.get("classifiers"));
+    let classifiers = downloads["classifiers"] as {string: any};
     if classifiers.contains(classifier) == false {
         return null;
     }
-    return as_map(classifiers.get(classifier));
+    return classifiers[classifier] as {string: any};
 }
 
 // Every file a launch of this version reads that is not on disk: the
@@ -145,32 +145,32 @@ fn install_legacy_native(lib) {
 fn install_missing(version: string) -> string[] {
     let missing = [];
     let parsed = lumen::parse_json(files::read(install_version_json(version)));
-    if is_map(parsed) == false {
+    if (parsed is {string: any}) == false {
         missing.push(install_version_json(version));
         return missing;
     }
-    let root = as_map(parsed);
+    let root = parsed as {string: any};
     if files::exists(install_client_jar(version)) == false {
         missing.push(install_client_jar(version));
     }
     let legacy_natives = false;
-    for entry in as_list(root.get("libraries")) {
-        let lib = as_map(entry);
+    for entry in (root["libraries"] as any[]) {
+        let lib = entry as {string: any};
         if install_lib_allowed(lib) == false || lib.contains("downloads") == false {
             continue;
         }
-        let downloads = as_map(lib.get("downloads"));
+        let downloads = lib["downloads"] as {string: any};
         if downloads.contains("artifact") {
-            let artifact = as_map(downloads.get("artifact"));
-            let path = libraries_dir() + "/" + as_str(artifact.get("path"));
+            let artifact = downloads["artifact"] as {string: any};
+            let path = libraries_dir() + "/" + (artifact["path"] as string);
             if files::exists(path) == false {
                 missing.push(path);
             }
         }
         let native = install_legacy_native(lib);
-        if is_null(native) == false {
+        if native != null {
             legacy_natives = true;
-            let npath = libraries_dir() + "/" + as_str(as_map(native).get("path"));
+            let npath = libraries_dir() + "/" + ((native as {string: any})["path"] as string);
             if files::exists(npath) == false {
                 missing.push(npath);
             }
@@ -180,8 +180,8 @@ fn install_missing(version: string) -> string[] {
         missing.push(install_natives_dir(version));
     }
     if root.contains("assetIndex") {
-        let index = as_map(root.get("assetIndex"));
-        let path = assets_dir() + "/indexes/" + as_str(index.get("id")) + ".json";
+        let index = root["assetIndex"] as {string: any};
+        let path = assets_dir() + "/indexes/" + (index["id"] as string) + ".json";
         if files::exists(path) == false {
             missing.push(path);
         }
@@ -346,12 +346,12 @@ fn install_start(version: string) -> bool {
 // metadata URL, so nothing is re-fetched to find it.
 fn install_lookup_url(version: string) -> string {
     let rows = signal_array("versions_all").all();
-    let items = as_list(rows);
+    let items = rows as any[];
     let found = "";
     for item in items {
-        let m = as_map(item);
-        if as_str(m.get("id")) == version {
-            found = as_str(m.get("url"));
+        let m = item as {string: any};
+        if (m["id"] as string) == version {
+            found = m["url"] as string;
         }
     }
     return found;
@@ -360,29 +360,29 @@ fn install_lookup_url(version: string) -> string {
 // --- Metadata -----------------------------------------------------------------
 
 fn install_on_version_json(tag: string, response: any) -> bool {
-    let r = as_map(response);
-    if as_bool(r.get("ok")) == false {
+    let r = response as {string: any};
+    if (r["ok"] as bool) == false {
         return install_fail("The version metadata could not be fetched");
     }
 
     let version = signal<string>("install_id").get();
-    let body = as_str(r.get("body"));
+    let body = r["body"] as string;
     files::write(install_version_json(version), body);
 
     let parsed = lumen::parse_json(body);
-    if is_map(parsed) == false {
+    if (parsed is {string: any}) == false {
         return install_fail("The version metadata could not be read");
     }
-    let root = as_map(parsed);
+    let root = parsed as {string: any};
 
     // The asset index is metadata too: the script reads it to learn the
     // objects, so it comes back through http rather than as a file.
     if root.contains("assetIndex") == false {
         return install_build_queue("");
     }
-    let index = as_map(root.get("assetIndex"));
-    let url = as_str(index.get("url"));
-    signal<string>("install_asset_id").set(as_str(index.get("id")));
+    let index = root["assetIndex"] as {string: any};
+    let url = index["url"] as string;
+    signal<string>("install_asset_id").set(index["id"] as string);
     signal<string>("install_status").set("Reading the asset index...");
     let request = {"url": url, "tag": "allay-asset-index", "timeout_ms": "20000"};
     lumen::http(request);
@@ -390,11 +390,11 @@ fn install_on_version_json(tag: string, response: any) -> bool {
 }
 
 fn install_on_asset_index(tag: string, response: any) -> bool {
-    let r = as_map(response);
-    if as_bool(r.get("ok")) == false {
+    let r = response as {string: any};
+    if (r["ok"] as bool) == false {
         return install_fail("The asset index could not be fetched");
     }
-    let body = as_str(r.get("body"));
+    let body = r["body"] as string;
     let asset_id = signal<string>("install_asset_id").get();
     files::write(assets_dir() + "/indexes/" + asset_id + ".json", body);
     return install_build_queue(body);
@@ -419,30 +419,30 @@ fn install_build_queue(index_body: string) -> bool {
     let version = signal<string>("install_id").get();
     let raw = files::read(install_version_json(version));
     let parsed = lumen::parse_json(raw);
-    if is_map(parsed) == false {
+    if (parsed is {string: any}) == false {
         return install_fail("The version metadata could not be read");
     }
-    let root = as_map(parsed);
+    let root = parsed as {string: any};
     let rows = [];
 
     install_add_client(rows, root, version);
-    for entry in as_list(root.get("libraries")) {
-        let lib = as_map(entry);
+    for entry in (root["libraries"] as any[]) {
+        let lib = entry as {string: any};
         if install_lib_allowed(lib) == false || lib.contains("downloads") == false {
             continue;
         }
-        let downloads = as_map(lib.get("downloads"));
+        let downloads = lib["downloads"] as {string: any};
 
         // Native jars from 1.19 on are among these: they go on the classpath
         // like any other library.
         if downloads.contains("artifact") {
-            let artifact = as_map(downloads.get("artifact"));
-            let path = libraries_dir() + "/" + as_str(artifact.get("path"));
+            let artifact = downloads["artifact"] as {string: any};
+            let path = libraries_dir() + "/" + (artifact["path"] as string);
             let sha1 = "";
             if artifact.contains("sha1") {
-                sha1 = as_str(artifact.get("sha1"));
+                sha1 = artifact["sha1"] as string;
             }
-            install_queue_add(rows, as_str(artifact.get("url")), path, "library", sha1);
+            install_queue_add(rows, artifact["url"] as string, path, "library", sha1);
         }
 
         // Older versions name a native jar through a classifier, and it is
@@ -450,22 +450,22 @@ fn install_build_queue(index_body: string) -> bool {
         // even when it is already on disk, so an install that died between
         // the download and the unpacking finishes the job.
         let native = install_legacy_native(lib);
-        if is_null(native) == false {
-            let n = as_map(native);
-            let npath = libraries_dir() + "/" + as_str(n.get("path"));
+        if native != null {
+            let n = native as {string: any};
+            let npath = libraries_dir() + "/" + (n["path"] as string);
             signal_array("install_natives_queue").push(npath);
             let nsha1 = "";
             if n.contains("sha1") {
-                nsha1 = as_str(n.get("sha1"));
+                nsha1 = n["sha1"] as string;
             }
-            install_queue_add(rows, as_str(n.get("url")), npath, "native", nsha1);
+            install_queue_add(rows, n["url"] as string, npath, "native", nsha1);
         }
     }
     if index_body != "" {
         install_add_objects(rows, index_body);
     }
 
-    signal<string>("install_status").set("Downloading " + str(rows.len()) + " files");
+    signal<string>("install_status").set("Downloading " + string(rows.len()) + " files");
     return queue_run(rows, "install");
 }
 
@@ -502,33 +502,33 @@ fn install_add_client(rows, root, version: string) -> bool {
     if root.contains("downloads") == false {
         return false;
     }
-    let downloads = as_map(root.get("downloads"));
+    let downloads = root["downloads"] as {string: any};
     if downloads.contains("client") == false {
         return false;
     }
-    let client = as_map(downloads.get("client"));
-    let url = as_str(client.get("url"));
+    let client = downloads["client"] as {string: any};
+    let url = client["url"] as string;
     let sha1 = "";
     if client.contains("sha1") {
-        sha1 = as_str(client.get("sha1"));
+        sha1 = client["sha1"] as string;
     }
     return install_queue_add(rows, url, install_client_jar(version), "client", sha1);
 }
 
 fn install_add_objects(rows, index_body: string) -> bool {
     let parsed = lumen::parse_json(index_body);
-    if is_map(parsed) == false {
+    if (parsed is {string: any}) == false {
         return false;
     }
-    let root = as_map(parsed);
+    let root = parsed as {string: any};
     if root.contains("objects") == false {
         return false;
     }
-    let objects = as_map(root.get("objects"));
+    let objects = root["objects"] as {string: any};
     let base = install_objects_base();
     for name in objects.keys() {
-        let entry = as_map(objects.get(name));
-        let hash = as_str(entry.get("hash"));
+        let entry = objects[name] as {string: any};
+        let hash = entry["hash"] as string;
         let shard = hash[..2];
         let url = base + shard + "/" + hash;
         let path = assets_dir() + "/objects/" + shard + "/" + hash;
@@ -554,14 +554,14 @@ fn install_pump() -> bool {
         if cursor >= total {
             break;
         }
-        let row = as_map(signal_array("install_queue").get(cursor));
-        let url = as_str(row.get("url"));
-        let path = as_str(row.get("path"));
-        let tag = "dl:" + str(cursor);
+        let row = signal_array("install_queue").get(cursor) as {string: any};
+        let url = row["url"] as string;
+        let path = row["path"] as string;
+        let tag = "dl:" + string(cursor);
         cursor = cursor + 1;
         let checksum = "";
-        if row.contains("sha1") && as_str(row.get("sha1")) != "" {
-            checksum = "sha1:" + as_str(row.get("sha1"));
+        if row.contains("sha1") && (row["sha1"] as string) != "" {
+            checksum = "sha1:" + (row["sha1"] as string);
         }
         let started = download::to_file(url, path, tag, checksum);
         if started {
@@ -577,7 +577,7 @@ fn install_pump() -> bool {
 }
 
 fn install_row_index(tag: string) -> int {
-    let cut = tag.find(":");
+    let cut = tag.index_of(":").unwrap_or(-1);
     let digits = tag[cut + 1..tag.len()];
     return int(digits);
 }
@@ -586,7 +586,7 @@ fn install_count_done() -> bool {
     let done = signal<int>("install_done").get() + 1;
     signal<int>("install_done").set(done);
     let total = signal<int>("install_total").get();
-    let progress = str(done) + " of " + str(total) + " files";
+    let progress = string(done) + " of " + string(total) + " files";
     if signal<string>("queue_owner").get() == "prepare" {
         signal<string>("prep_status").set("Downloading the loader and mods: " + progress);
     } else {
@@ -662,12 +662,13 @@ fn install_extract_next() -> bool {
         install_flatten_natives();
         return install_finish();
     }
-    let path = as_str(signal_array("install_natives_queue").get(at));
+    let path = signal_array("install_natives_queue").get(at) as string;
     signal<int>("install_natives_at").set(at + 1);
     signal<string>("install_status").set("Unpacking native libraries "
-        + str(at + 1) + " of " + str(queued));
+        + string(at + 1) + " of " + string(queued));
     let version = signal<string>("install_id").get();
-    let started = archive::extract(path, install_natives_dir(version), "nat:" + str(at));
+    let started = archive::extract(path, install_natives_dir(version), "nat:" + string(at),
+                                   archive::ExtractOptions::default());
     if started == false {
         let failed = signal<int>("install_failed").get() + 1;
         signal<int>("install_failed").set(failed);
@@ -712,8 +713,8 @@ fn install_finish() -> bool {
         // No marker: the version stays uninstalled, and running Install again
         // fetches only what is missing, because the queue skips what is there.
         signal<string>("install_phase").set("error");
-        signal<string>("install_status").set(str(failed) + " of "
-            + str(signal<int>("install_total").get())
+        signal<string>("install_status").set(string(failed) + " of "
+            + string(signal<int>("install_total").get())
             + " files failed. Install again to retry the ones that are missing.");
         signal<string>("status").set(version + " did not install fully");
         versions_mark_installed();
@@ -728,7 +729,7 @@ fn install_finish() -> bool {
     if missing.len() > 0 {
         signal<string>("install_phase").set("error");
         signal<string>("install_error").set("Missing: " + missing[0]);
-        signal<string>("install_status").set(str(missing.len())
+        signal<string>("install_status").set(string(missing.len())
             + " files the game needs are still missing after the install.");
         signal<string>("status").set(version + " did not install fully");
         versions_mark_installed();

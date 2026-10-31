@@ -1,4 +1,5 @@
 import "lumen.cdl";
+import "std/json";
 
 // The app shell: where things are kept on disk, the settings the user can
 // change, and the handlers the sidebar needs.
@@ -82,11 +83,11 @@ fn make_dirs() -> bool {
 // takes the type of the first thing put in it, and the documents built here
 // mix strings, numbers, flags, and nested maps.
 fn new_map() {
-    return as_map(lumen::parse_json("{}"));
+    return lumen::parse_json("{}") as {string: any};
 }
 
 fn new_list() {
-    return as_list(lumen::parse_json("[]"));
+    return lumen::parse_json("[]") as any[];
 }
 
 // --- Lifecycle ---------------------------------------------------------------
@@ -130,16 +131,16 @@ fn load_settings() -> bool {
     let raw = files::read(settings_path());
     if raw.trim() != "" {
         let parsed = lumen::parse_json(raw);
-        if is_map(parsed) {
-            let cfg = as_map(parsed);
+        if parsed is {string: any} {
+            let cfg = parsed as {string: any};
             if cfg.contains("jvm_memory") {
-                memory = float(as_str(cfg.get("jvm_memory")));
+                memory = float(cfg["jvm_memory"] as string);
             }
             if cfg.contains("jvm_args") {
-                args = as_str(cfg.get("jvm_args"));
+                args = cfg["jvm_args"] as string;
             }
             if cfg.contains("game_dir") {
-                dir = as_str(cfg.get("game_dir"));
+                dir = cfg["game_dir"] as string;
             }
         }
     }
@@ -151,16 +152,16 @@ fn load_settings() -> bool {
 }
 
 fn save_settings(memory: float, args: string, dir: string) -> string {
-    let mb = str((int(memory) / 1024) * 1024);
+    let mb = string((int(memory) / 1024) * 1024);
     let cfg = {"jvm_memory": mb, "jvm_args": args, "game_dir": dir};
-    let text = json_stringify(cfg);
+    let text = json::stringify(cfg);
     files::write(settings_path(), text);
     return text;
 }
 
 fn format_memory(memory: float) -> string {
     let gb = int(memory) / 1024;
-    return str(gb) + " GB";
+    return string(gb) + " GB";
 }
 
 // --- Home --------------------------------------------------------------------
@@ -171,7 +172,7 @@ fn format_memory(memory: float) -> string {
 fn home_refresh() -> bool {
     let d = profiles_read_doc();
     let list = profiles_of(d);
-    signal<string>("home_profile_count").set(str(list.len()));
+    signal<string>("home_profile_count").set(string(list.len()));
 
     let installed = 0;
     for name in files::list(versions_dir()) {
@@ -179,10 +180,10 @@ fn home_refresh() -> bool {
             installed = installed + 1;
         }
     }
-    signal<string>("home_version_count").set(str(installed));
+    signal<string>("home_version_count").set(string(installed));
 
     let accounts = accounts_list_of(accounts_read_doc());
-    signal<string>("home_account_count").set(str(accounts.len()));
+    signal<string>("home_account_count").set(string(accounts.len()));
 
     return home_pick_last(list);
 }
@@ -197,27 +198,27 @@ fn home_pick_last(list) -> bool {
     }
 
     // The stamp is fixed-width, so ordering the text orders the times.
-    let best = as_map(list[0]);
+    let best = list[0] as {string: any};
     let best_stamp = "";
     for entry in list {
-        let m = as_map(entry);
-        let stamp = as_str(m.get("last_played"));
+        let m = entry as {string: any};
+        let stamp = m["last_played"] as string;
         if stamp > best_stamp {
             best_stamp = stamp;
             best = m;
         }
     }
 
-    signal<string>("home_last_id").set(as_str(best.get("id")));
-    signal<string>("home_last_name").set(as_str(best.get("name")));
-    let version = as_str(best.get("game_version"));
+    signal<string>("home_last_id").set(best["id"] as string);
+    signal<string>("home_last_name").set(best["name"] as string);
+    let version = best["game_version"] as string;
     if version == "" {
         version = "no version yet";
     }
     signal<string>("home_last_version").set(version);
-    signal<string>("home_last_loader").set(profiles_loader_label(as_str(best.get("loader"))));
+    signal<string>("home_last_loader").set(profiles_loader_label(best["loader"] as string));
 
-    let mb = as_int(best.get("memory_mb"));
+    let mb = best["memory_mb"] as int;
     let played = "never played";
     if best_stamp != "" {
         played = "last played " + best_stamp;
@@ -227,9 +228,9 @@ fn home_pick_last(list) -> bool {
     if mods == 1 {
         mods_label = "1 mod";
     } else if mods > 1 {
-        mods_label = str(mods) + " mods";
+        mods_label = string(mods) + " mods";
     }
-    signal<string>("home_last_meta").set(played + "  -  " + mods_label + "  -  " + str(mb) + " MB heap");
+    signal<string>("home_last_meta").set(played + "  -  " + mods_label + "  -  " + string(mb) + " MB heap");
 
     signal<string>("home_has_profile").set("1");
     signal<string>("home_no_profile").set("");

@@ -1,4 +1,5 @@
 import "lumen.cdl";
+import "std/json";
 import "std/time";
 
 // Profiles: the list, the create flow, the per-profile detail panel, and the
@@ -37,35 +38,35 @@ fn profiles_doc_text() -> string {
 fn profiles_read_doc() {
     let text = profiles_doc_text();
     let parsed = lumen::parse_json(text);
-    if is_null(parsed) {
+    if parsed == null {
         let fresh = profiles_empty_doc();
         let seeded = lumen::parse_json(fresh);
-        return as_map(seeded);
+        return seeded as {string: any};
     }
-    return as_map(parsed);
+    return parsed as {string: any};
 }
 
 fn profiles_of(d) {
-    let raw = d.get("profiles");
-    if is_null(raw) {
-        return [];
+    let raw = d["profiles"];
+    if raw == null {
+        return new_list();
     }
-    return as_list(raw);
+    return raw as any[];
 }
 
 fn profiles_mods_of(m) {
     if m.contains("mods") == false {
-        return [];
+        return new_list();
     }
-    let raw = m.get("mods");
-    if is_null(raw) {
-        return [];
+    let raw = m["mods"];
+    if raw == null {
+        return new_list();
     }
-    return as_list(raw);
+    return raw as any[];
 }
 
 fn profiles_persist(d) -> bool {
-    let text = json_stringify(d);
+    let text = json::stringify(d);
     signal<string>("profiles_doc").set(text);
     let path = profiles_path();
     let ok = files::write(path, text);
@@ -95,23 +96,23 @@ fn profiles_migrate() -> bool {
         return false;
     }
     let parsed = lumen::parse_json(raw);
-    if is_map(parsed) == false {
+    if (parsed is {string: any}) == false {
         return false;
     }
-    let old = as_map(parsed);
+    let old = parsed as {string: any};
     let d = profiles_read_doc();
-    d.insert("next_seq", as_int(old.get("next_seq")));
+    d["next_seq"] = (old["next_seq"] as int);
     let list = profiles_of(d);
     let moved_all = true;
-    let items = as_list(old.get("instances"));
+    let items = old["instances"] as any[];
     for item in items {
-        let m = as_map(item);
-        let id = as_str(m.get("id"));
-        let version = as_str(m.get("game_version"));
-        m.insert("mods", []);
-        let loader = as_str(m.get("loader"));
+        let m = item as {string: any};
+        let id = m["id"] as string;
+        let version = m["game_version"] as string;
+        m["mods"] = [];
+        let loader = m["loader"] as string;
         if loader == "" {
-            m.insert("loader", "vanilla");
+            m["loader"] = "vanilla";
         }
         list.push(m);
         let from = legacy_instances_dir() + "/" + id;
@@ -194,25 +195,25 @@ fn profiles_count_label(n: int, one: string, many: string) -> string {
     if n == 1 {
         return "1 " + one;
     }
-    return str(n) + " " + many;
+    return string(n) + " " + many;
 }
 
 fn profiles_decorate(m) -> bool {
-    let mb = as_int(m.get("memory_mb"));
+    let mb = m["memory_mb"] as int;
     let label = "memory unset";
     if mb > 0 {
-        label = str(mb) + " MB";
+        label = string(mb) + " MB";
     }
-    m.insert("memory_label", label);
-    let loader = as_str(m.get("loader"));
-    m.insert("loader_label", profiles_loader_label(loader));
+    m["memory_label"] = label;
+    let loader = m["loader"] as string;
+    m["loader_label"] = profiles_loader_label(loader);
     let mods = profiles_mods_of(m);
-    m.insert("mods_label", profiles_count_label(mods.len(), "mod", "mods"));
-    let version = as_str(m.get("game_version"));
+    m["mods_label"] = profiles_count_label(mods.len(), "mod", "mods");
+    let version = m["game_version"] as string;
     if version == "" {
-        m.insert("version_label", "not played yet");
+        m["version_label"] = "not played yet";
     } else {
-        m.insert("version_label", "last on " + version);
+        m["version_label"] = "last on " + version;
     }
     return true;
 }
@@ -223,19 +224,19 @@ fn profiles_decorate(m) -> bool {
 fn profiles_row_key(id: string) -> string {
     let rev = signal<int>("rows_rev").get() + 1;
     signal<int>("rows_rev").set(rev);
-    return id + "@" + str(rev);
+    return id + "@" + string(rev);
 }
 
 fn profiles_refresh(d) -> bool {
     let list = profiles_of(d);
-    let text = json_stringify(list);
+    let text = json::stringify(list);
     let copy = lumen::parse_json(text);
-    let rows = as_list(copy);
+    let rows = copy as any[];
     let i = 0;
     while i < rows.len() {
-        let m = as_map(rows[i]);
+        let m = rows[i] as {string: any};
         profiles_decorate(m);
-        m.insert("key", profiles_row_key(as_str(m.get("id"))));
+        m["key"] = profiles_row_key(m["id"] as string);
         i = i + 1;
     }
     signal_array("profiles").set(rows);
@@ -250,7 +251,7 @@ fn profiles_refresh(d) -> bool {
         if n == 1 {
             signal<string>("profiles_count_label").set("1 profile");
         } else {
-            signal<string>("profiles_count_label").set(str(n) + " profiles");
+            signal<string>("profiles_count_label").set(string(n) + " profiles");
         }
     }
     home_refresh();
@@ -263,8 +264,8 @@ fn profiles_refresh(d) -> bool {
 fn profiles_bind_rows(rows) -> bool {
     let i = 0;
     while i < rows.len() {
-        let m = as_map(rows[i]);
-        let id = as_str(m.get("id"));
+        let m = rows[i] as {string: any};
+        let id = m["id"] as string;
         lumen::on("click", "play|" + id, "profiles_play_clicked");
         lumen::on("click", "open|" + id, "profiles_open_clicked");
         lumen::on("click", "ren|" + id, "profiles_rename_clicked");
@@ -278,7 +279,7 @@ fn profiles_bind_rows(rows) -> bool {
 // --- Lookup helpers ----------------------------------------------------------
 
 fn profiles_row_id(id: string) -> string {
-    let cut = id.find("|");
+    let cut = id.index_of("|").unwrap_or(-1);
     if cut < 0 {
         return "";
     }
@@ -288,8 +289,8 @@ fn profiles_row_id(id: string) -> string {
 fn profiles_index_of(list, id: string) -> int {
     let i = 0;
     while i < list.len() {
-        let m = as_map(list[i]);
-        if as_str(m.get("id")) == id {
+        let m = list[i] as {string: any};
+        if (m["id"] as string) == id {
             return i;
         }
         i = i + 1;
@@ -302,8 +303,8 @@ fn profiles_name_of(list, id: string) -> string {
     if at < 0 {
         return "";
     }
-    let m = as_map(list[at]);
-    return as_str(m.get("name"));
+    let m = list[at] as {string: any};
+    return m["name"] as string;
 }
 
 // --- Create ------------------------------------------------------------------
@@ -312,7 +313,7 @@ fn profiles_record_text(id: string, name: string, loader: string) -> string {
     let clean = name.replace("\\", "/").replace("\"", "'");
     return "{\"id\":\"" + id + "\",\"name\":\"" + clean + "\",\"game_version\":\"\""
         + ",\"loader\":\"" + loader + "\",\"memory_mb\":2048,\"notes\":\"\",\"mods\":[]"
-        + ",\"created\":\"" + format(now(), "%Y-%m-%d %H:%M") + "\",\"last_played\":\"\"}";
+        + ",\"created\":\"" + time::format(time::now(), "%Y-%m-%d %H:%M") + "\",\"last_played\":\"\"}";
 }
 
 fn profiles_create_open(id: string) -> bool {
@@ -337,13 +338,13 @@ fn profiles_create_confirm(id: string) -> bool {
     let loader = profiles_loader_from_label(signal<string>("new_loader").get());
 
     let d = profiles_read_doc();
-    let seq = as_int(d.get("next_seq"));
-    let new_id = "profile-" + str(seq);
-    d.insert("next_seq", seq + 1);
+    let seq = d["next_seq"] as int;
+    let new_id = "profile-" + string(seq);
+    d["next_seq"] = seq + 1;
 
     let text = profiles_record_text(new_id, wanted, loader);
     let parsed = lumen::parse_json(text);
-    let record = as_map(parsed);
+    let record = parsed as {string: any};
     let list = profiles_of(d);
     list.push(record);
 
@@ -369,18 +370,18 @@ fn profiles_play_clicked(id: string) -> bool {
     if at < 0 {
         return false;
     }
-    let m = as_map(list[at]);
+    let m = list[at] as {string: any};
     let version = signal<string>("versions_chosen").get();
     if version == "" {
-        version = as_str(m.get("game_version"));
+        version = m["game_version"] as string;
     }
     if version == "" {
         version = signal<string>("versions_latest_release").get();
     }
     signal<string>("play_profile").set(pid);
-    signal<string>("play_title").set("Play " + as_str(m.get("name")));
+    signal<string>("play_title").set("Play " + (m["name"] as string));
     signal<string>("play_version").set(version);
-    let loader = as_str(m.get("loader"));
+    let loader = m["loader"] as string;
     let hint = "The game runs without a mod loader.";
     if loader != "vanilla" {
         hint = "Each mod is fetched in its build for this version, with "
@@ -400,13 +401,13 @@ fn profiles_play_last(pid: string) -> bool {
     if at < 0 {
         return false;
     }
-    let m = as_map(list[at]);
-    let version = as_str(m.get("game_version"));
+    let m = list[at] as {string: any};
+    let version = m["game_version"] as string;
     if version == "" {
         return profiles_play_clicked("play|" + pid);
     }
     signal<string>("play_profile").set(pid);
-    signal<string>("play_title").set("Play " + as_str(m.get("name")));
+    signal<string>("play_title").set("Play " + (m["name"] as string));
     signal<string>("play_version").set(version);
     signal<string>("play_hint").set("");
     mods_prepare_reset();
@@ -448,8 +449,8 @@ fn profiles_record_version(pid: string, version: string) -> bool {
     if at < 0 {
         return false;
     }
-    let m = as_map(list[at]);
-    m.insert("game_version", version);
+    let m = list[at] as {string: any};
+    m["game_version"] = version;
     profiles_persist(d);
     profiles_refresh(d);
     return true;
@@ -466,8 +467,8 @@ fn profiles_record_played(pid: string) -> bool {
     if at < 0 {
         return false;
     }
-    let m = as_map(list[at]);
-    m.insert("last_played", format(now(), "%Y-%m-%d %H:%M"));
+    let m = list[at] as {string: any};
+    m["last_played"] = time::format(time::now(), "%Y-%m-%d %H:%M");
     profiles_persist(d);
     profiles_refresh(d);
     if signal<string>("detail_id").get() == pid {
@@ -485,25 +486,25 @@ fn profiles_show_detail(pid: string) -> bool {
     if at < 0 {
         return false;
     }
-    let m = as_map(list[at]);
+    let m = list[at] as {string: any};
     signal<string>("detail_id").set(pid);
-    signal<string>("detail_name").set(as_str(m.get("name")));
-    let loader = as_str(m.get("loader"));
+    signal<string>("detail_name").set(m["name"] as string);
+    let loader = m["loader"] as string;
     let mods = profiles_mods_of(m);
     signal<string>("detail_summary").set(profiles_loader_label(loader) + " - "
         + profiles_count_label(mods.len(), "mod", "mods"));
     signal<string>("detail_loader").set(profiles_loader_label(loader));
-    let mb = as_int(m.get("memory_mb"));
-    signal<string>("detail_memory").set(str(mb));
-    signal<string>("detail_notes").set(as_str(m.get("notes")));
+    let mb = m["memory_mb"] as int;
+    signal<string>("detail_memory").set(string(mb));
+    signal<string>("detail_notes").set(m["notes"] as string);
 
-    let created = as_str(m.get("created"));
+    let created = m["created"] as string;
     if created == "" {
         signal<string>("detail_created_label").set("Created: not recorded");
     } else {
         signal<string>("detail_created_label").set("Created: " + created);
     }
-    let played = as_str(m.get("last_played"));
+    let played = m["last_played"] as string;
     if played == "" {
         signal<string>("detail_played_label").set("Last played: never");
     } else {
@@ -542,15 +543,14 @@ fn profiles_detail_save(id: string) -> bool {
     if pid == "" {
         return false;
     }
-    // int() only runs once is_int() has said the text is a number.
     let memory_text = signal<string>("detail_memory").get();
-    let trimmed = memory_text.trim();
-    let numeric = trimmed.is_int();
-    if !numeric {
+    let mb = 0;
+    if memory_text.trim().parse<int>() is Some(n) {
+        mb = n;
+    } else {
         signal<string>("profiles_status").set("Memory must be a whole number of megabytes.");
         return false;
     }
-    let mb = int(trimmed);
     let too_small = mb < 256;
     if too_small {
         signal<string>("profiles_status").set("Give the profile at least 256 MB.");
@@ -565,14 +565,14 @@ fn profiles_detail_save(id: string) -> bool {
     if at < 0 {
         return false;
     }
-    let m = as_map(list[at]);
-    m.insert("memory_mb", mb);
-    m.insert("notes", notes);
-    m.insert("loader", loader);
+    let m = list[at] as {string: any};
+    m["memory_mb"] = mb;
+    m["notes"] = notes;
+    m["loader"] = loader;
 
     profiles_persist(d);
     profiles_refresh(d);
-    let name = as_str(m.get("name"));
+    let name = m["name"] as string;
     signal<string>("profiles_status").set("Saved " + name + ".");
     profiles_show_detail(pid);
     return true;
@@ -585,14 +585,14 @@ fn profiles_show_mods(m) -> bool {
     let mods = profiles_mods_of(m);
     let rows = [];
     for entry in mods {
-        let e = as_map(entry);
-        let project = as_str(e.get("id"));
+        let e = entry as {string: any};
+        let project = e["id"] as string;
         let label = "Optional";
         if mod_required(e) {
             label = "Required";
         }
         let row = {"id": project, "key": profiles_row_key(project),
-                   "title": as_str(e.get("title")), "required_label": label};
+                   "title": e["title"] as string, "required_label": label};
         rows.push(row);
         lumen::on("click", "modreq|" + project, "profiles_mod_toggle_required");
         lumen::on("click", "modrm|" + project, "profiles_mod_remove");
@@ -609,7 +609,7 @@ fn profiles_show_mods(m) -> bool {
 // A mod entry written by hand may leave `required` out; that means optional.
 fn mod_required(e) -> bool {
     if e.contains("required") {
-        return as_bool(e.get("required"));
+        return e["required"] as bool;
     }
     return false;
 }
@@ -617,8 +617,8 @@ fn mod_required(e) -> bool {
 fn profiles_mod_index(mods, project: string) -> int {
     let i = 0;
     while i < mods.len() {
-        let e = as_map(mods[i]);
-        if as_str(e.get("id")) == project {
+        let e = mods[i] as {string: any};
+        if (e["id"] as string) == project {
             return i;
         }
         i = i + 1;
@@ -639,20 +639,20 @@ fn profiles_mod_add(project: string, slug: string, title: string) -> bool {
     if at < 0 {
         return false;
     }
-    let m = as_map(list[at]);
+    let m = list[at] as {string: any};
     let mods = profiles_mods_of(m);
     if profiles_mod_index(mods, project) >= 0 {
         signal<string>("mods_status").set(title + " is already in this profile.");
         return false;
     }
     let entry = {"id": project, "slug": slug, "title": title};
-    let record = as_map(lumen::parse_json(json_stringify(entry)));
-    record.insert("required", false);
+    let record = lumen::parse_json(json::stringify(entry)) as {string: any};
+    record["required"] = false;
     mods.push(record);
-    m.insert("mods", mods);
+    m["mods"] = mods;
     let note = "";
-    if as_str(m.get("loader")) == "vanilla" {
-        m.insert("loader", "fabric");
+    if (m["loader"] as string) == "vanilla" {
+        m["loader"] = "fabric";
         note = " The profile now uses Fabric, which mods need.";
     }
     profiles_persist(d);
@@ -671,20 +671,20 @@ fn profiles_mod_edit(id: string, remove: bool) -> bool {
     if at < 0 {
         return false;
     }
-    let m = as_map(list[at]);
+    let m = list[at] as {string: any};
     let mods = profiles_mods_of(m);
     let i = profiles_mod_index(mods, project);
     if i < 0 {
         return false;
     }
-    let e = as_map(mods[i]);
-    let title = as_str(e.get("title"));
+    let e = mods[i] as {string: any};
+    let title = e["title"] as string;
     if remove {
         mods.remove(i);
         signal<string>("mods_status").set("Removed " + title + ".");
     } else {
         let required = mod_required(e) == false;
-        e.insert("required", required);
+        e["required"] = required;
         if required {
             signal<string>("mods_status").set(title + " is required: on a version it has "
                 + "no build for, the game does not start.");
@@ -693,7 +693,7 @@ fn profiles_mod_edit(id: string, remove: bool) -> bool {
                 + "no build for, the game starts without it.");
         }
     }
-    m.insert("mods", mods);
+    m["mods"] = mods;
     profiles_persist(d);
     profiles_refresh(d);
     profiles_show_detail(pid);
@@ -749,8 +749,8 @@ fn profiles_rename_ok(id: string) -> bool {
     if at < 0 {
         return false;
     }
-    let m = as_map(list[at]);
-    m.insert("name", name);
+    let m = list[at] as {string: any};
+    m["name"] = name;
 
     profiles_persist(d);
     profiles_refresh(d);
@@ -775,18 +775,18 @@ fn profiles_duplicate_clicked(id: string) -> bool {
     if at < 0 {
         return false;
     }
-    let source = as_map(list[at]);
-    let text = json_stringify(source);
+    let source = list[at] as {string: any};
+    let text = json::stringify(source);
     let parsed = lumen::parse_json(text);
-    let copy = as_map(parsed);
+    let copy = parsed as {string: any};
 
-    let seq = as_int(d.get("next_seq"));
-    let new_id = "profile-" + str(seq);
-    d.insert("next_seq", seq + 1);
-    copy.insert("id", new_id);
-    let name = as_str(source.get("name"));
-    copy.insert("name", name + " copy");
-    copy.insert("last_played", "");
+    let seq = d["next_seq"] as int;
+    let new_id = "profile-" + string(seq);
+    d["next_seq"] = seq + 1;
+    copy["id"] = new_id;
+    let name = source["name"] as string;
+    copy["name"] = name + " copy";
+    copy["last_played"] = "";
     list.push(copy);
 
     profiles_persist(d);
@@ -832,8 +832,8 @@ fn profiles_delete_ok(id: string) -> bool {
     if at < 0 {
         return false;
     }
-    let m = as_map(list[at]);
-    let name = as_str(m.get("name"));
+    let m = list[at] as {string: any};
+    let name = m["name"] as string;
     list.remove(at);
 
     profiles_persist(d);
