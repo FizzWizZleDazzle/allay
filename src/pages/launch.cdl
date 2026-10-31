@@ -30,9 +30,9 @@ fn launch_uuid() -> string {
 }
 
 fn launch_token() -> string {
-    let a = accounts_active() as {string: any};
-    if a.contains("access_token") {
-        return a["access_token"] as string;
+    let token = accounts_active_token();
+    if token != "" {
+        return token;
     }
     return "0";
 }
@@ -307,8 +307,10 @@ fn launch_append(line: string) -> bool {
     return true;
 }
 
+// Only the game's own processes reach the panel; Allay starts others, such
+// as the java probe below and a chmod for the tokens directory.
 fn on_process_stdout(tag: string, line: string) -> bool {
-    if tag == "java-probe" {
+    if tag.starts_with("game:") == false {
         return true;
     }
     return launch_append(line);
@@ -322,11 +324,14 @@ fn on_process_stderr(tag: string, line: string) -> bool {
         }
         return true;
     }
+    if tag.starts_with("game:") == false {
+        return true;
+    }
     return launch_append(line);
 }
 
 fn on_process_exit(tag: string, code: int) -> bool {
-    if tag == "java-probe" {
+    if tag.starts_with("game:") == false {
         return true;
     }
     signal<string>("launch_running").set("");

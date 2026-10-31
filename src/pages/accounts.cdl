@@ -1,7 +1,8 @@
 import "lumen.cdl";
 import "std/json";
+import "std/time";
 
-// Signing in to a Microsoft account.
+// Signing in to a Microsoft account, and staying signed in.
 //
 // Allay uses the device-code flow published for Minecraft for Nintendo Switch
 // (client id 00000000441CC96B). Mojang stopped taking registrations for new
@@ -22,10 +23,15 @@ import "std/json";
 // then a sixth request reads the profile for the name and UUID the game is
 // launched with. Every step is one lumen::http call routed back by tag.
 //
-// Tokens are written to accounts.json in the app's data directory in the
-// clear. Lumen has no keyring binding, so there is nowhere better to put them
-// yet; the file is in a per-user directory and nothing else in the app reads
-// it.
+// The game token lasts a day. Step 2 also hands back a refresh token, which
+// Allay keeps; when the game token is close to running out, at start-up or
+// before a launch, the refresh token buys a new Microsoft token with no
+// browser involved and steps 3 to 5 run again from it. That is a refresh: the
+// same chain with `account_mode` set to "refresh", ending in an update of the
+// stored tokens instead of a new account.
+//
+// Tokens never go into accounts.json, which only names the accounts. They
+// live in private/tokens.json, in a directory only this user can read.
 
 fn accounts_client_id() -> string {
     return "00000000441CC96B";
@@ -43,6 +49,18 @@ fn accounts_empty_doc() -> string {
     return "{\"version\":1,\"active\":\"\",\"next_seq\":1,\"accounts\":[]}";
 }
 
+// A game token with less time left than this is refreshed before a launch,
+// so a session does not start on a token that runs out minutes later.
+fn accounts_launch_margin() -> int {
+    return 30 * 60;
+}
+
+// At start-up only a token that is about to run out is refreshed; one with
+// hours left is refreshed when a launch needs it.
+fn accounts_startup_margin() -> int {
+    return 2 * 60 * 60;
+}
+
 // --- Setup -------------------------------------------------------------------
 
 fn accounts_init() -> bool {
@@ -51,9 +69,12 @@ fn accounts_init() -> bool {
     lumen::on("click", "account-copy-code", "accounts_copy_code");
     lumen::on("click", "account-open-browser", "accounts_open_browser");
     lumen::on("timer", "account-poll", "accounts_poll_tick");
+    lumen::on("timer", "account-wake", "accounts_wake_tick");
+    signal<int>("account_wake_left").set(0);
 
     lumen::on("http", "msa-devicecode", "accounts_on_devicecode");
     lumen::on("http", "msa-token", "accounts_on_token");
+    lumen::on("http", "msa-refresh", "accounts_on_refresh_token");
     lumen::on("http", "xbl-auth", "accounts_on_xbl");
     lumen::on("http", "xsts-auth", "accounts_on_xsts");
     lumen::on("http", "mc-login", "accounts_on_mc_login");
@@ -63,7 +84,14 @@ fn accounts_init() -> bool {
     signal<string>("account_status").set("");
     signal<string>("account_code").set("");
     signal<string>("account_url").set("");
+    signal<string>("account_mode").set("");
+    signal<string>("account_refresh_id").set("");
+    signal<string>("account_after_refresh").set("");
+
+    accounts_secure_dir();
+    accounts_move_tokens();
     accounts_refresh();
+    accounts_refresh_if_due(accounts_startup_margin(), "");
     return true;
 }
 
@@ -91,6 +119,130 @@ fn accounts_persist(d) -> bool {
     return files::write(accounts_store_path(), text);
 }
 
+fn accounts_find(list, id: string) -> int {
+    let i = 0;
+    for entry in list {
+        if ((entry as {string: any})["id"] as string) == id {
+            return i;
+        }
+        i = i + 1;
+    }
+    return -1;
+}
+
+// --- Token storage --------------------------------------------------------------
+
+fn accounts_secret_dir() -> string {
+    return files::data_dir() + "/private";
+}
+
+fn accounts_tokens_path() -> string {
+    return accounts_secret_dir() + "/tokens.json";
+}
+
+// The tokens directory is closed to other users of the machine. Lumen writes
+// a file by replacing it, so a mode on the file itself would not survive the
+// next write; the directory's mode does. Where there is no chmod, as on
+// Windows, the start fails quietly and the per-user data directory is what
+// keeps the file private.
+fn accounts_secure_dir() -> bool {
+    files::mkdir(accounts_secret_dir());
+    process::start("chmod", ["700", accounts_secret_dir()], "chmod-private",
+                   process::StartOptions::default());
+    return true;
+}
+
+fn accounts_read_tokens() {
+    let parsed = lumen::parse_json(files::read(accounts_tokens_path()));
+    if (parsed is {string: any}) == false {
+        parsed = lumen::parse_json("{\"version\":1,\"tokens\":{}}");
+    }
+    return parsed as {string: any};
+}
+
+fn accounts_write_tokens(t) -> bool {
+    files::mkdir(accounts_secret_dir());
+    return files::write(accounts_tokens_path(), json::stringify(t));
+}
+
+// The stored tokens of one account, or an empty map.
+fn accounts_tokens_of(id: string) {
+    let all = accounts_read_tokens()["tokens"] as {string: any};
+    if all.contains(id) {
+        return all[id] as {string: any};
+    }
+    return new_map();
+}
+
+fn accounts_token_field(id: string, key: string) -> string {
+    let t = accounts_tokens_of(id) as {string: any};
+    if t.contains(key) {
+        return t[key] as string;
+    }
+    return "";
+}
+
+fn accounts_expires_at(id: string) -> int {
+    let t = accounts_tokens_of(id) as {string: any};
+    if t.contains("expires_at") {
+        return t["expires_at"] as int;
+    }
+    return 0;
+}
+
+fn accounts_set_tokens(id: string, access: string, refresh: string, expires_at: int) -> bool {
+    let t = accounts_read_tokens();
+    let all = t["tokens"] as {string: any};
+    let entry = new_map();
+    entry["access_token"] = access;
+    entry["refresh_token"] = refresh;
+    entry["expires_at"] = expires_at;
+    all[id] = entry;
+    return accounts_write_tokens(t);
+}
+
+fn accounts_drop_tokens(id: string) -> bool {
+    let t = accounts_read_tokens();
+    let all = t["tokens"] as {string: any};
+    if all.contains(id) {
+        all.remove(id);
+        accounts_write_tokens(t);
+    }
+    return true;
+}
+
+// Allay used to keep the tokens in accounts.json beside the names. They move
+// to the private file on the first start that finds them there; their age is
+// unknown, so the game token counts as expired and is refreshed before the
+// next launch.
+fn accounts_move_tokens() -> bool {
+    let d = accounts_read_doc();
+    let moved = false;
+    for entry in accounts_list_of(d) {
+        let a = entry as {string: any};
+        if a.contains("access_token") || a.contains("refresh_token") {
+            let access = "";
+            let refresh = "";
+            if a.contains("access_token") {
+                access = a["access_token"] as string;
+                a.remove("access_token");
+            }
+            if a.contains("refresh_token") {
+                refresh = a["refresh_token"] as string;
+                a.remove("refresh_token");
+            }
+            accounts_set_tokens(a["id"] as string, access, refresh, 0);
+            moved = true;
+        }
+    }
+    if moved {
+        accounts_persist(d);
+    }
+    return true;
+}
+
+// --- What the pages show --------------------------------------------------------
+
 // Rebuilds the rows the accounts page renders and the summary the sidebar
 // shows, so both read from one place.
 fn accounts_refresh() -> bool {
@@ -105,14 +257,21 @@ fn accounts_refresh() -> bool {
     for entry in list {
         let a = entry as {string: any};
         let id = a["id"] as string;
+        let kind = accounts_kind_label(a["type"] as string);
+        if accounts_needs_signin(a) {
+            kind = "Signed out. Sign in again to play online.";
+        }
         if id == active {
             a["state"] = "Active";
             active_name = a["name"] as string;
-            active_kind = accounts_kind_label(a["type"] as string);
+            active_kind = kind;
+            if accounts_needs_signin(a) {
+                active_kind = "Signed out";
+            }
         } else {
             a["state"] = "";
         }
-        a["kind_label"] = accounts_kind_label(a["type"] as string);
+        a["kind_label"] = kind;
         rows.push(entry);
     }
 
@@ -147,6 +306,14 @@ fn accounts_kind_label(kind: string) -> string {
     return "Offline";
 }
 
+fn accounts_needs_signin(a) -> bool {
+    let m = a as {string: any};
+    if m.contains("needs_signin") {
+        return m["needs_signin"] as bool;
+    }
+    return false;
+}
+
 // The account the launcher plays as. Empty fields mean nobody is signed in,
 // and launch falls back to offline play.
 fn accounts_active() {
@@ -164,29 +331,192 @@ fn accounts_active() {
     return found;
 }
 
+// The game token of the active account, or "" when there is none.
+fn accounts_active_token() -> string {
+    let a = accounts_active() as {string: any};
+    if a.contains("id") == false {
+        return "";
+    }
+    return accounts_token_field(a["id"] as string, "access_token");
+}
+
+// --- Staying signed in ------------------------------------------------------------
+
+// Called before a launch with the name of what to do once the active account
+// can play. Returns true when it can play now, and false when a refresh has
+// started; the refresh ends by calling accounts_continue(after).
+fn accounts_ensure_fresh(after: string) -> bool {
+    if signal<string>("account_mode").get() == "refresh" {
+        // A refresh is already on its way; the launch waits for it.
+        signal<string>("account_after_refresh").set(after);
+        return false;
+    }
+    return accounts_refresh_if_due(accounts_launch_margin(), after) == false;
+}
+
+// Starts a refresh of the active account when its game token has less than
+// `margin` seconds left. Returns whether one started.
+fn accounts_refresh_if_due(margin: int, after: string) -> bool {
+    if signal<string>("account_flow").get() != "" {
+        // A sign-in is under way and owns the chain; it brings fresh tokens.
+        return false;
+    }
+    let a = accounts_active() as {string: any};
+    if a.contains("id") == false || (a["type"] as string) != "msa" {
+        return false;
+    }
+    if accounts_needs_signin(a) {
+        return false;
+    }
+    let id = a["id"] as string;
+    let left = accounts_expires_at(id) - time::now();
+    if left > margin && accounts_token_field(id, "access_token") != "" {
+        return false;
+    }
+    let refresh = accounts_token_field(id, "refresh_token");
+    if refresh == "" {
+        accounts_mark_signed_out(id);
+        return false;
+    }
+
+    signal<string>("account_mode").set("refresh");
+    signal<string>("account_refresh_id").set(id);
+    signal<string>("account_after_refresh").set(after);
+    let body = "client_id=" + accounts_client_id()
+             + "&grant_type=refresh_token"
+             + "&scope=" + accounts_form_escape(accounts_scope())
+             + "&refresh_token=" + accounts_form_escape(refresh);
+    accounts_post_form("https://login.live.com/oauth20_token.srf", body, "msa-refresh");
+    return true;
+}
+
+fn accounts_on_refresh_token(tag: string, response: any) -> bool {
+    let r = response as {string: any};
+    let status = r["status"] as int;
+    if status == 0 || status >= 500 {
+        return accounts_fail("Microsoft could not be reached");
+    }
+    let parsed = lumen::parse_json(r["body"] as string);
+    if (parsed is {string: any}) == false {
+        return accounts_fail("Microsoft could not be reached");
+    }
+    let body = parsed as {string: any};
+    if body.contains("error") {
+        // invalid_grant is Microsoft's answer for a refresh token that was
+        // revoked, ran out after months unused, or died with a password
+        // change. Only a new sign-in recovers from it.
+        if (body["error"] as string) == "invalid_grant" {
+            return accounts_refresh_failed(true, "Microsoft ended the sign-in. Sign in again.");
+        }
+        return accounts_fail("Microsoft refused to renew the sign-in");
+    }
+    if body.contains("access_token") == false {
+        return accounts_fail("Microsoft's reply carried no token");
+    }
+    signal<string>("account_msa_token").set(body["access_token"] as string);
+    // Microsoft may hand back a new refresh token, and the old one stops
+    // working once it has; when it does not, the old one stays good.
+    if body.contains("refresh_token") {
+        signal<string>("account_refresh_token").set(body["refresh_token"] as string);
+    } else {
+        signal<string>("account_refresh_token").set(
+            accounts_token_field(signal<string>("account_refresh_id").get(), "refresh_token"));
+    }
+    return accounts_xbox_step();
+}
+
+// A refresh that could not finish. `signed_out` means the tokens are no good
+// any more and only a new sign-in helps; otherwise Microsoft was out of reach
+// and the tokens Allay has are kept for the next try.
+fn accounts_refresh_failed(signed_out: bool, message: string) -> bool {
+    let id = signal<string>("account_refresh_id").get();
+    let after = signal<string>("account_after_refresh").get();
+    signal<string>("account_mode").set("");
+    signal<string>("account_refresh_id").set("");
+    signal<string>("account_after_refresh").set("");
+    accounts_clear_secrets();
+    if signed_out {
+        accounts_mark_signed_out(id);
+    }
+    signal<string>("account_status").set(message);
+    if after != "" {
+        accounts_continue(after, signed_out, message);
+    }
+    return false;
+}
+
+// Marks an account as needing a new sign-in and forgets its tokens.
+fn accounts_mark_signed_out(id: string) -> bool {
+    let d = accounts_read_doc();
+    let list = accounts_list_of(d);
+    let at = accounts_find(list, id);
+    if at >= 0 {
+        let a = list[at] as {string: any};
+        a["needs_signin"] = true;
+        accounts_persist(d);
+    }
+    accounts_drop_tokens(id);
+    accounts_refresh();
+    return true;
+}
+
+// Whatever waited on the refresh runs now. Only a launch waits today.
+fn accounts_continue(after: string, signed_out: bool, message: string) -> bool {
+    if after == "launch" {
+        return mods_launch_after_refresh(signed_out, message);
+    }
+    return false;
+}
+
+// Form bodies carry the tokens, and a refresh token holds characters a form
+// reads as separators, so everything outside the unreserved set is escaped.
+fn accounts_form_escape(text: string) -> string {
+    let keep = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789-_.~";
+    let ascii = " !\"#$%&'()*+,-./0123456789:;<=>?@ABCDEFGHIJKLMNOPQRSTUVWXYZ[\\]^_`abcdefghijklmnopqrstuvwxyz{|}~";
+    let hex = "0123456789ABCDEF";
+    let out = "";
+    for c in text.chars() {
+        if keep.contains(c) {
+            out = out + c;
+        } else if ascii.index_of(c) is Some(at) {
+            let code = at + 32;
+            out = out + "%" + hex.char_at(code / 16) + hex.char_at(code % 16);
+        }
+    }
+    return out;
+}
+
 // --- Starting the flow ---------------------------------------------------------
 
 fn accounts_signin_clicked(id: string) -> bool {
     if signal<string>("account_flow").get() != "" {
         return false;
     }
+    if signal<string>("account_mode").get() == "refresh" {
+        signal<string>("account_status").set("Renewing the saved sign-in. Try again in a moment.");
+        return false;
+    }
+    signal<string>("account_mode").set("signin");
     signal<string>("account_flow").set("devicecode");
     signal<string>("account_status").set("Asking Microsoft for a code...");
     signal<string>("account_code").set("");
     signal<int>("account_retries").set(0);
 
     let body = "client_id=" + accounts_client_id()
-             + "&scope=" + accounts_scope()
+             + "&scope=" + accounts_form_escape(accounts_scope())
              + "&response_type=device_code";
     accounts_post_form("https://login.live.com/oauth20_connect.srf", body, "msa-devicecode");
     return true;
 }
 
+// The code itself is left in its signal: emptying it in the tick that closes
+// the panel around it takes the app down (lumen-fx/lumen#613). The next
+// sign-in empties it before it shows.
 fn accounts_cancel_clicked(id: string) -> bool {
     lumen::cancel_timer("account-poll");
     signal<string>("account_flow").set("");
+    signal<string>("account_mode").set("");
     signal<string>("account_status").set("");
-    signal<string>("account_code").set("");
     return true;
 }
 
@@ -208,6 +538,32 @@ fn accounts_request(url: string, tag: string, content_type: string, body: string
                    "timeout_ms": "30000", "header:Content-Type": content_type,
                    "header:Accept": "application/json"};
     lumen::http(request);
+    return accounts_keep_awake();
+}
+
+// Lumen 0.0.11 delivers an http reply that arrives while the app is idle
+// only on the next tick something else causes (lumen-fx/lumen#612), so a
+// sign-in would stall until the user touched the window. A short timer keeps
+// the app ticking for as long as a request can take; a timer that re-arms
+// itself does fire on time.
+fn accounts_keep_awake() -> bool {
+    let idle = signal<int>("account_wake_left").get() == 0;
+    signal<int>("account_wake_left").set(120);
+    if idle {
+        lumen::set_timeout("account-wake", 250);
+    }
+    return true;
+}
+
+fn accounts_wake_tick(name: string) -> bool {
+    let left = signal<int>("account_wake_left").get() - 1;
+    if left < 0 {
+        left = 0;
+    }
+    signal<int>("account_wake_left").set(left);
+    if left > 0 {
+        lumen::set_timeout("account-wake", 250);
+    }
     return true;
 }
 
@@ -224,7 +580,7 @@ fn accounts_get(url: string, tag: string, bearer: string) -> bool {
     let request = {"method": "GET", "url": url, "tag": tag, "timeout_ms": "30000",
                    "header:Authorization": authorization, "header:Accept": "application/json"};
     lumen::http(request);
-    return true;
+    return accounts_keep_awake();
 }
 
 // Bounded, so a code Microsoft keeps rejecting for some other reason cannot
@@ -238,17 +594,40 @@ fn accounts_renew() -> bool {
     signal<string>("account_code").set("");
     signal<string>("account_status").set("That code expired. Fetching a new one...");
     let body = "client_id=" + accounts_client_id()
-             + "&scope=" + accounts_scope()
+             + "&scope=" + accounts_form_escape(accounts_scope())
              + "&response_type=device_code";
     accounts_post_form("https://login.live.com/oauth20_connect.srf", body, "msa-devicecode");
     return true;
 }
 
+// A step of the chain went wrong. During a sign-in the message is shown and
+// the flow ends; during a refresh Microsoft is treated as out of reach, and
+// the saved tokens stay for the next try.
 fn accounts_fail(message: string) -> bool {
+    if signal<string>("account_mode").get() == "refresh" {
+        return accounts_refresh_failed(false, message);
+    }
     lumen::cancel_timer("account-poll");
     signal<string>("account_flow").set("");
+    signal<string>("account_mode").set("");
     signal<string>("account_status").set(message);
+    accounts_clear_secrets();
     return false;
+}
+
+// A step that answered with a refusal rather than an outage. During a refresh
+// that means the saved sign-in is no good any more.
+fn accounts_refused(message: string) -> bool {
+    if signal<string>("account_mode").get() == "refresh" {
+        return accounts_refresh_failed(true, message + " Sign in again.");
+    }
+    return accounts_fail(message);
+}
+
+// A reply that is a refusal: any 4xx. A 5xx or no reply at all is an outage.
+fn accounts_is_refusal(r) -> bool {
+    let status = (r as {string: any})["status"] as int;
+    return status >= 400 && status < 500;
 }
 
 // --- 1. Device code ------------------------------------------------------------
@@ -290,8 +669,8 @@ fn accounts_poll_tick(name: string) -> bool {
         return false;
     }
     let body = "client_id=" + accounts_client_id()
-             + "&device_code=" + signal<string>("account_device_code").get()
-             + "&grant_type=urn:ietf:params:oauth:grant-type:device_code";
+             + "&device_code=" + accounts_form_escape(signal<string>("account_device_code").get())
+             + "&grant_type=" + accounts_form_escape("urn:ietf:params:oauth:grant-type:device_code");
     accounts_post_form("https://login.live.com/oauth20_token.srf", body, "msa-token");
     return true;
 }
@@ -341,12 +720,20 @@ fn accounts_on_token(tag: string, response: any) -> bool {
     }
 
     signal<string>("account_msa_token").set(body["access_token"] as string);
+    signal<string>("account_refresh_token").set("");
     if body.contains("refresh_token") {
         signal<string>("account_refresh_token").set(body["refresh_token"] as string);
     }
     signal<string>("account_flow").set("xbox");
-    signal<string>("account_status").set("Signing in to Xbox Live...");
+    return accounts_xbox_step();
+}
 
+// --- 3. Xbox Live ----------------------------------------------------------------
+
+// From a Microsoft token, sign in to Xbox Live. Shared by a sign-in and a
+// refresh.
+fn accounts_xbox_step() -> bool {
+    accounts_progress("Signing in to Xbox Live...");
     let payload = "{\"Properties\":{\"AuthMethod\":\"RPS\",\"SiteName\":\"user.auth.xboxlive.com\",\"RpsTicket\":\""
                 + signal<string>("account_msa_token").get()
                 + "\"},\"RelyingParty\":\"http://auth.xboxlive.com\",\"TokenType\":\"JWT\"}";
@@ -354,12 +741,22 @@ fn accounts_on_token(tag: string, response: any) -> bool {
     return true;
 }
 
-// --- 3. Xbox Live ----------------------------------------------------------------
+// Progress text is for the sign-in the user is watching; a refresh runs
+// without a word unless it fails.
+fn accounts_progress(message: string) -> bool {
+    if signal<string>("account_mode").get() != "refresh" {
+        signal<string>("account_status").set(message);
+    }
+    return true;
+}
 
 fn accounts_on_xbl(tag: string, response: any) -> bool {
     let r = response as {string: any};
     if (r["ok"] as bool) == false {
-        return accounts_fail("Xbox Live refused the token");
+        if accounts_is_refusal(r) {
+            return accounts_refused("Xbox Live refused the token.");
+        }
+        return accounts_fail("Xbox Live could not be reached");
     }
     let raw = r["body"] as string;
     let parsed = lumen::parse_json(raw);
@@ -388,7 +785,7 @@ fn accounts_on_xbl(tag: string, response: any) -> bool {
         }
     }
     signal<string>("account_uhs").set(uhs);
-    signal<string>("account_status").set("Authorising for Minecraft...");
+    accounts_progress("Authorising for Minecraft...");
 
     let payload = "{\"Properties\":{\"SandboxId\":\"RETAIL\",\"UserTokens\":[\""
                 + token
@@ -401,16 +798,23 @@ fn accounts_on_xbl(tag: string, response: any) -> bool {
 
 fn accounts_on_xsts(tag: string, response: any) -> bool {
     let r = response as {string: any};
+    if (r["ok"] as bool) == false && accounts_is_refusal(r) == false {
+        return accounts_fail("Xbox Live could not be reached");
+    }
     let raw = r["body"] as string;
     let parsed = lumen::parse_json(raw);
     if (parsed is {string: any}) == false {
+        if (r["ok"] as bool) == false {
+            return accounts_refused("Xbox Live refused the authorisation.");
+        }
         return accounts_fail("Xbox Live's authorisation could not be read");
     }
     let body = parsed as {string: any};
     if (r["ok"] as bool) == false {
-        let reason = "Xbox Live refused the authorisation";
+        let reason = "Xbox Live refused the authorisation.";
         if body.contains("XErr") {
-            let code = string(body["XErr"] as int);
+            // XErr is past the range of an int, so it is compared as text.
+            let code = json::stringify(body["XErr"]);
             if code == "2148916233" {
                 reason = "This Microsoft account has no Xbox profile. Create one at xbox.com, then sign in again.";
             } else if code == "2148916235" {
@@ -418,17 +822,17 @@ fn accounts_on_xsts(tag: string, response: any) -> bool {
             } else if code == "2148916238" {
                 reason = "This account is a child account and needs to be added to a family.";
             } else {
-                reason = "Xbox Live refused the authorisation (" + code + ")";
+                reason = "Xbox Live refused the authorisation (" + code + ").";
             }
         }
-        return accounts_fail(reason);
+        return accounts_refused(reason);
     }
     if body.contains("Token") == false {
         return accounts_fail("Xbox Live returned no authorisation");
     }
     let xsts = body["Token"] as string;
     let uhs = signal<string>("account_uhs").get();
-    signal<string>("account_status").set("Signing in to Minecraft...");
+    accounts_progress("Signing in to Minecraft...");
 
     let payload = "{\"identityToken\":\"XBL3.0 x=" + uhs + ";" + xsts + "\"}";
     accounts_post_json("https://api.minecraftservices.com/authentication/login_with_xbox",
@@ -441,7 +845,10 @@ fn accounts_on_xsts(tag: string, response: any) -> bool {
 fn accounts_on_mc_login(tag: string, response: any) -> bool {
     let r = response as {string: any};
     if (r["ok"] as bool) == false {
-        return accounts_fail("Minecraft services refused the sign-in");
+        if accounts_is_refusal(r) {
+            return accounts_refused("Minecraft services refused the sign-in.");
+        }
+        return accounts_fail("Minecraft services could not be reached");
     }
     let raw = r["body"] as string;
     let parsed = lumen::parse_json(raw);
@@ -452,8 +859,14 @@ fn accounts_on_mc_login(tag: string, response: any) -> bool {
     if body.contains("access_token") == false {
         return accounts_fail("Minecraft services returned no token");
     }
+    // A day, as Mojang issues them, when the reply does not say.
+    let lifetime = 86400;
+    if body.contains("expires_in") && body["expires_in"] is int {
+        lifetime = body["expires_in"] as int;
+    }
+    signal<int>("account_mc_expires_at").set(time::now() + lifetime);
     signal<string>("account_mc_token").set(body["access_token"] as string);
-    signal<string>("account_status").set("Reading the profile...");
+    accounts_progress("Reading the profile...");
     accounts_get("https://api.minecraftservices.com/minecraft/profile",
                  "mc-profile", signal<string>("account_mc_token").get());
     return true;
@@ -463,10 +876,13 @@ fn accounts_on_profile(tag: string, response: any) -> bool {
     let r = response as {string: any};
     let status = r["status"] as int;
     if status == 404 {
-        return accounts_fail("This account does not own Minecraft: Java Edition.");
+        return accounts_refused("This account does not own Minecraft: Java Edition.");
     }
     if (r["ok"] as bool) == false {
-        return accounts_fail("The Minecraft profile could not be read");
+        if accounts_is_refusal(r) {
+            return accounts_refused("The Minecraft profile could not be read.");
+        }
+        return accounts_fail("Minecraft services could not be reached");
     }
     let raw = r["body"] as string;
     let parsed = lumen::parse_json(raw);
@@ -477,7 +893,12 @@ fn accounts_on_profile(tag: string, response: any) -> bool {
     if body.contains("name") == false {
         return accounts_fail("The Minecraft profile carried no name");
     }
-    return accounts_store(body["name"] as string, accounts_dash_uuid(body["id"] as string));
+    let name = body["name"] as string;
+    let uuid = accounts_dash_uuid(body["id"] as string);
+    if signal<string>("account_mode").get() == "refresh" {
+        return accounts_store_refreshed(name, uuid);
+    }
+    return accounts_store(name, uuid);
 }
 
 // The profile gives a UUID with the dashes stripped; the game wants them back.
@@ -518,18 +939,50 @@ fn accounts_store(name: string, uuid: string) -> bool {
     rm["type"] = "msa";
     rm["name"] = name;
     rm["uuid"] = uuid;
-    rm["access_token"] = signal<string>("account_mc_token").get();
-    rm["refresh_token"] = signal<string>("account_refresh_token").get();
     list.push(rm);
 
     m["active"] = id;
+    accounts_set_tokens(id, signal<string>("account_mc_token").get(),
+                        signal<string>("account_refresh_token").get(),
+                        signal<int>("account_mc_expires_at").get());
     accounts_persist(d);
     accounts_clear_secrets();
 
     signal<string>("account_flow").set("");
+    signal<string>("account_mode").set("");
     signal<string>("account_status").set("Signed in as " + name);
     signal<string>("status").set("Signed in as " + name);
     accounts_refresh();
+    return true;
+}
+
+// A refresh keeps the account as it is, with new tokens. The name is taken
+// from the profile again, since a player can rename themselves.
+fn accounts_store_refreshed(name: string, uuid: string) -> bool {
+    let id = signal<string>("account_refresh_id").get();
+    let after = signal<string>("account_after_refresh").get();
+    let d = accounts_read_doc();
+    let list = accounts_list_of(d);
+    let at = accounts_find(list, id);
+    if at < 0 || ((list[at] as {string: any})["uuid"] as string) != uuid {
+        // The account was removed while the refresh ran, or the tokens belong
+        // to another player; neither is kept.
+        return accounts_refresh_failed(false, "");
+    }
+    let a = list[at] as {string: any};
+    a["name"] = name;
+    accounts_set_tokens(id, signal<string>("account_mc_token").get(),
+                        signal<string>("account_refresh_token").get(),
+                        signal<int>("account_mc_expires_at").get());
+    accounts_persist(d);
+    accounts_clear_secrets();
+    signal<string>("account_mode").set("");
+    signal<string>("account_refresh_id").set("");
+    signal<string>("account_after_refresh").set("");
+    accounts_refresh();
+    if after != "" {
+        accounts_continue(after, false, "");
+    }
     return true;
 }
 
@@ -542,7 +995,7 @@ fn accounts_clear_secrets() -> bool {
     signal<string>("account_uhs").set("");
     signal<string>("account_mc_token").set("");
     signal<string>("account_refresh_token").set("");
-    signal<string>("account_code").set("");
+    signal<int>("account_mc_expires_at").set(0);
     return true;
 }
 
@@ -560,6 +1013,7 @@ fn accounts_use_clicked(id: string) -> bool {
     m["active"] = acct;
     accounts_persist(d);
     accounts_refresh();
+    accounts_refresh_if_due(accounts_startup_margin(), "");
     return true;
 }
 
@@ -568,14 +1022,7 @@ fn accounts_drop_clicked(id: string) -> bool {
     let d = accounts_read_doc();
     let m = d as {string: any};
     let list = accounts_list_of(d);
-    let at = -1;
-    let i = 0;
-    for entry in list {
-        if ((entry as {string: any})["id"] as string) == acct {
-            at = i;
-        }
-        i = i + 1;
-    }
+    let at = accounts_find(list, acct);
     if at < 0 {
         return false;
     }
@@ -584,6 +1031,7 @@ fn accounts_drop_clicked(id: string) -> bool {
         m["active"] = "";
     }
     accounts_persist(d);
+    accounts_drop_tokens(acct);
     accounts_refresh();
     return true;
 }

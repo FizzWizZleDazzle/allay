@@ -100,8 +100,17 @@ Allay signs in as the Minecraft for Nintendo Switch application, because
 Mojang no longer registers new launcher applications and a third-party
 launcher has no client id of its own to offer.
 
-Tokens are stored unencrypted in Allay's data directory. Lumen has no keyring
-binding yet.
+You sign in once. Allay keeps the sign-in across restarts and renews it on its
+own: at start-up when it is about to run out, and before a launch when less
+than half an hour is left, so the game never starts on a session that is about
+to end. If Microsoft cannot be reached, the game starts on the session Allay
+already has. If Microsoft has ended the sign-in, for example after a password
+change or months without use, the account shows as signed out and Play asks
+you to sign in again.
+
+The tokens are kept unencrypted in `private/tokens.json` in Allay's data
+directory, in a folder only your user can open. Lumen has no keyring binding
+yet.
 
 Without an account Allay launches in offline mode, which works in singleplayer
 and on servers that do not check.

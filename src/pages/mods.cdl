@@ -970,6 +970,39 @@ fn mods_after_downloads(failed: int) -> bool {
         return mods_fail(string(failed) + " files did not download. Press Play again to retry "
             + "the ones that are missing. " + signal<string>("install_error").get());
     }
+    // A signed-in account plays with a game token that has time left on it,
+    // so the sign-in is renewed first when it is close to running out.
+    let account = accounts_active() as {string: any};
+    if account.contains("id") && accounts_needs_signin(account) {
+        return mods_fail((account["name"] as string) + " is signed out. Sign in again on the "
+            + "Accounts page, or remove the account to play offline.");
+    }
+    if accounts_ensure_fresh("launch") == false {
+        mods_set_phase("signing-in", "Renewing the sign-in...");
+        return true;
+    }
+    return mods_launch_now();
+}
+
+// The sign-in renewal a launch waited on has finished. A sign-in Microsoft
+// ended stops the launch; one that could not reach Microsoft plays on the
+// token Allay already has, which still works in singleplayer and, while it
+// lasts, online.
+fn mods_launch_after_refresh(signed_out: bool, message: string) -> bool {
+    if signal<string>("prep_phase").get() != "signing-in" {
+        return false;
+    }
+    if signed_out {
+        return mods_fail(message);
+    }
+    let started = mods_launch_now();
+    if started && message != "" {
+        signal<string>("status").set("Launched with the saved sign-in: " + message);
+    }
+    return started;
+}
+
+fn mods_launch_now() -> bool {
     let doc = mods_read_doc();
     let pid = doc["profile"] as string;
     let version = doc["version"] as string;

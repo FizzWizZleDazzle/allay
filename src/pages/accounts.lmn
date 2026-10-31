@@ -67,7 +67,7 @@
       </column>
 
       <label class="page-footnote" wrap="word"
-             text="Allay signs in with the device-code flow published for Minecraft for Nintendo Switch, because Mojang no longer registers new launcher applications. Your password is never entered into Allay; Microsoft hands back a token after you approve the code in a browser. Tokens are stored unencrypted in Allay's data directory."/>
+             text="Allay signs in with the device-code flow published for Minecraft for Nintendo Switch, because Mojang no longer registers new launcher applications. Your password is never entered into Allay; Microsoft hands back a token after you approve the code in a browser. You sign in once: Allay renews the sign-in on its own and keeps it, unencrypted, in a folder of its data directory that only your user can open."/>
 
     </column>
   </use>
