@@ -156,17 +156,21 @@
 
         <!-- The game's own output, so a crash on startup is readable without
              leaving the launcher. -->
+        <!-- An <if> lays its children out in a row, so the column stacks
+             them. -->
         <if signal="launch_log">
-          <tile class="divider" height="1px"/>
-          <row align="center" gap="10">
-            <label class="card-title" grow="1" text="Game output"/>
-            <if signal="launch_running">
-              <button id="prof-stop" class="btn btn-danger" text="Stop the game"/>
-            </if>
-          </row>
-          <scroll class="launch-log">
-            <label class="launch-log-text" wrap="word" bind-text="$launch_log" text=""/>
-          </scroll>
+          <column gap="12" width="100%">
+            <tile class="divider" height="1px"/>
+            <row align="center" gap="10">
+              <label class="card-title" grow="1" text="Game output"/>
+              <if signal="launch_running">
+                <button id="prof-stop" class="btn btn-danger" text="Stop the game"/>
+              </if>
+            </row>
+            <scroll class="launch-log">
+              <label class="launch-log-text" wrap="word" bind-text="$launch_log" text=""/>
+            </scroll>
+          </column>
         </if>
       </column>
     </if>

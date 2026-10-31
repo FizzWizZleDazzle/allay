@@ -1061,6 +1061,13 @@ checkbox:checked, radio:checked {
   text-color: var(--text-2);
 }
 
+/* A long description wraps instead of pushing the Add button out of the
+   row; the column holding it would otherwise keep the description's one-line
+   width as its minimum (lumen-fx/lumen#609). */
+.mod-row column {
+  min-width: 0;
+}
+
 /* The game's own output. Monospace so a stack trace lines up, and a fixed
    height so a chatty run cannot push the rest of the panel off screen. */
 
